@@ -1,0 +1,14 @@
+__pycache__/
+*.py[cod]
+.DS_Store
+Thumbs.db
+.env
+.venv/
+venv/
+.codex/
+
+# Local/private customer data should not be committed.
+客户解决方案库-私有/
+customer-data/
+private-data/
+*.local.md
