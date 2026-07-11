@@ -1,15 +1,15 @@
 ---
 name: customer-solution-library
-description: 客户解决方案库管理 Skill v2。用于建立、维护、查询、分析和协同处理客户信息库，支持 Markdown 客户档案、结构化索引、统一信息入口、信号价值评分、保险客户与其他客户分类管理、录音转写/聊天记录/口述记录摘录、客户身份匹配与防误并档、分批补全、客户分层、跟进复盘、团队协同、分享脱敏、数据质量检查和标准化输出。触发场景包括：录入客户、查询客户、整理客户信息、判断一段客户信息是否值得入档、从聊天记录提取客户情况、把录音文字整理进客户档案、生成客户画像、生成客户分析 brief、生成专属解决方案、更新客户档案、客户分层、客户跟进、客户复盘、团队协同处理客户、设计客户管理系统。
+description: 客户解决方案库管理 Skill v3。用于建立、维护、查询、分析和协同处理客户信息库，支持 Markdown 客户档案、结构化索引、统一信息入口、信号价值评分、保险客户与其他客户分类管理、录音转写/聊天记录/口述记录摘录、客户身份匹配与防误并档、分批补全、客户洞察卡、客户深度分析、信息缺口识别、产品/服务反向匹配客户、潜在客户筛选、客户分层、经营看板、跟进复盘、团队协同、分享脱敏、数据质量检查和标准化输出。触发场景包括：录入客户、查询客户、整理客户信息、判断一段客户信息是否值得入档、从聊天记录提取客户情况、把录音文字整理进客户档案、生成客户画像、生成客户分析 brief、生成专属解决方案、筛选某产品潜在客户、根据需求筛客户、找高价值客户、生成本周经营看板、更新客户档案、客户分层、客户跟进、客户复盘、团队协同处理客户、设计客户管理系统。
 ---
 
-# 客户解决方案库 v2
+# 客户解决方案库 v3
 
 ## 核心定位
 
 把客户库当成“客户长期服务大脑”，不是普通通讯录或销售 CRM。目标是围绕客户持续沉淀事实、判断、方案、沟通、跟进、复盘和团队协作。
 
-v2 的关键升级是：入口先判断信息价值，再决定是否匹配客户、入档、分派、归档或丢弃。不要让客户库变成新的杂乱收件箱。
+v3 的关键升级是：客户库不能只停留在录入和归档，必须进一步支持客户洞察、产品/服务反向筛选、专属方案和经营看板。录入是底座，分析和行动才是价值。
 
 ## 启动检查
 
@@ -21,7 +21,10 @@ v2 的关键升级是：入口先判断信息价值，再决定是否匹配客�
 | 判断信息是否值得入库 | 读取 `references/intake-routing.md`，按 100 分制评分并给出路由 |
 | 从录音转写/聊天记录摘录客户信息 | 读取 `references/conversation-ingestion.md`，先摘录，再身份匹配 |
 | 查询客户 | 先查索引/文件名/YAML，再按用户指定格式输出 |
-| 生成客户分析/方案 | 读取客户档案、事件流、业务模块，区分事实/推断/待确认 |
+| 生成客户分析/方案 | 读取 `references/customer-insights.md`，读取客户档案、事件流、业务模块，区分事实/推断/待确认 |
+| 识别信息缺口 | 使用 `scripts/customer_library.py gaps --base <路径> --customer-id <ID>`，再人工补充判断 |
+| 筛选某产品潜在客户 | 读取 `references/product-matching.md`，使用产品画像和 `product-match` 命令 |
+| 生成经营看板 | 使用 `scripts/customer_library.py dashboard --base <路径>` |
 | 分批补全客户信息 | 追加事件记录，更新主档案摘要，不覆盖历史 |
 | 团队协同/分享 | 读取 `references/team-collaboration.md`，按权限与分享类型输出 |
 | 数据质量检查 | 读取 `references/data-quality-audit.md`，扫描缺口、重复、过期、隐私风险 |
@@ -34,6 +37,8 @@ v2 的关键升级是：入口先判断信息价值，再决定是否匹配客�
 Markdown：保存客户事实、沟通记录、方案、复盘
 索引/JSON/表格：负责快速查询、筛选、分层、跟进、统计
 Skill：负责入口判断、信息摘录、身份匹配、输出和质检
+洞察层：负责需求、风险、机会、顾虑、信息缺口和下一步动作
+经营层：负责产品匹配、客户筛选、跟进看板和复盘
 ```
 
 规模化规则：
@@ -140,6 +145,9 @@ business_line:
 | 整理成发客户的话 | 客户可读版话术 |
 | 从聊天记录摘录 | 对话摘录报告 + 入档建议 |
 | 判断信息有没有价值 | 信号评分表 + 路由建议 |
+| 做深度分析 | 客户深度分析 + 洞察卡 + 信息缺口 |
+| 某产品找客户 | 产品潜在客户清单 |
+| 本周经营安排 | 本周经营看板 |
 | 团队协同 | 协同任务卡/脱敏摘要/复核清单 |
 
 输出模板见 `references/output-formats.md`。
@@ -176,6 +184,32 @@ business_line:
 4. 关键变更追加变更记录。
 5. 每次更新刷新 `updated`、`info_completeness`、`next_action`。
 
+## 洞察与经营能力
+
+客户信息入库后，优先判断是否需要进一步生成洞察：
+
+```text
+客户信息事件
+→ 客户洞察卡
+→ 信息缺口
+→ 客户深度分析
+→ 产品/服务匹配
+→ 跟进动作或专属方案
+```
+
+规则：
+
+1. 客户洞察卡回答“这意味着什么”，不要替代原始记录。
+2. 深度分析必须区分事实、推断、待确认。
+3. 信息缺口要服务于“能否形成方案/行动”，不是无限补资料。
+4. 产品匹配必须说明匹配原因、风险点、缺口和建议动作。
+5. 高匹配不等于直接推荐；涉及保险、健康、理赔、法律、财务承诺时必须人工复核。
+
+详细规则见：
+
+- `references/customer-insights.md`
+- `references/product-matching.md`
+
 ## 隐私与合规边界
 
 硬规则：
@@ -191,6 +225,8 @@ business_line:
 - `references/intake-routing.md`：统一信息入口、信号价值评分、路由规则。
 - `references/data-model.md`：目录结构、字段规范、客户类型设计。
 - `references/workflows.md`：录入、更新、查询、分析、方案、复盘工作流。
+- `references/customer-insights.md`：客户洞察卡、深度分析、信息缺口识别。
+- `references/product-matching.md`：产品/服务画像、潜在客户筛选、产品机会清单。
 - `references/conversation-ingestion.md`：录音转写、聊天记录、口述记录的摘录与入档规则。
 - `references/team-collaboration.md`：团队协同、分享、复核、权限边界。
 - `references/data-quality-audit.md`：数据质量检查、重复客户、过期跟进、隐私风险。
@@ -204,4 +240,8 @@ python .claude/skills/customer-solution-library/scripts/customer_library.py init
 python .claude/skills/customer-solution-library/scripts/customer_library.py index --base <客户库路径>
 python .claude/skills/customer-solution-library/scripts/customer_library.py audit --base <客户库路径>
 python .claude/skills/customer-solution-library/scripts/customer_library.py score-intake --text "<客户信息片段>"
+python .claude/skills/customer-solution-library/scripts/customer_library.py analyze-customer --base <客户库路径> --customer-id CUST-0001
+python .claude/skills/customer-solution-library/scripts/customer_library.py gaps --base <客户库路径> --customer-id CUST-0001
+python .claude/skills/customer-solution-library/scripts/customer_library.py product-match --base <客户库路径> --product-id PROD-001
+python .claude/skills/customer-solution-library/scripts/customer_library.py dashboard --base <客户库路径>
 ```

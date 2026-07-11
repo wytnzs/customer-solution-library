@@ -6,6 +6,10 @@ Commands:
   index        --base PATH
   find         --base PATH --query TEXT
   audit        --base PATH
+  analyze-customer --base PATH (--customer-id ID | --query TEXT)
+  gaps         --base PATH (--customer-id ID | --query TEXT)
+  product-match --base PATH (--product-id ID | --product-file PATH)
+  dashboard    --base PATH
   score-intake --text TEXT | --file PATH
 """
 
@@ -42,6 +46,9 @@ DIRS = [
     "06-服务跟进",
     "07-客户分层",
     "08-复盘案例",
+    "09-产品与机会/products",
+    "09-产品与机会/matching",
+    "10-客户洞察",
     "90-索引与看板",
     "99-模板与规则",
 ]
@@ -67,6 +74,13 @@ updated: {today}
 next_action:
 next_followup_date:
 tags: []
+needs: []
+risks: []
+opportunities: []
+concerns: []
+product_fit: []
+analysis_status: not_started
+solution_status: not_ready
 ---
 
 # 客户档案
@@ -87,11 +101,46 @@ tags: []
 
 ## 阶段性判断
 
+## 需求、风险与机会
+
 ## 下一步动作
 
 ## 重要记录索引
 
 ## 变更记录
+"""
+
+
+TEMPLATE_PRODUCT = """---
+type: product_profile
+product_id:
+product_name:
+business_line:
+status: active
+suitable_for: []
+not_suitable_for: []
+matching_signals: []
+risk_signals: []
+required_information: []
+created: {today}
+updated: {today}
+---
+
+# 产品/服务画像
+
+## 一句话说明
+
+## 适合谁
+
+## 不适合谁
+
+## 匹配信号
+
+## 风险信号
+
+## 需要的前置信息
+
+## 推荐沟通方式
 """
 
 
@@ -147,6 +196,17 @@ def scalar(value: object) -> str:
     return "" if value is None else str(value)
 
 
+def as_list(value: object) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return [str(v).strip() for v in value if str(v).strip()]
+    text = str(value).strip()
+    if not text:
+        return []
+    return [part.strip() for part in re.split(r"[,，、;；]", text) if part.strip()]
+
+
 def init_library(base: Path) -> None:
     base.mkdir(parents=True, exist_ok=True)
     for item in DIRS:
@@ -157,6 +217,13 @@ def init_library(base: Path) -> None:
     if not profile_template.exists():
         profile_template.write_text(
             TEMPLATE_PROFILE.format(today=date.today().isoformat()),
+            encoding="utf-8",
+        )
+
+    product_template = template_dir / "产品服务画像模板.md"
+    if not product_template.exists():
+        product_template.write_text(
+            TEMPLATE_PRODUCT.format(today=date.today().isoformat()),
             encoding="utf-8",
         )
 
@@ -194,6 +261,13 @@ def build_index(base: Path) -> list[dict[str, str]]:
                 "priority": scalar(fm.get("priority", "")),
                 "next_action": scalar(fm.get("next_action", "")),
                 "next_followup_date": scalar(fm.get("next_followup_date", "")),
+                "needs": scalar(fm.get("needs", "")),
+                "risks": scalar(fm.get("risks", "")),
+                "opportunities": scalar(fm.get("opportunities", "")),
+                "concerns": scalar(fm.get("concerns", "")),
+                "product_fit": scalar(fm.get("product_fit", "")),
+                "analysis_status": scalar(fm.get("analysis_status", "")),
+                "solution_status": scalar(fm.get("solution_status", "")),
                 "updated": scalar(fm.get("updated", "")),
                 "path": str(path.relative_to(base)),
             }
@@ -261,6 +335,274 @@ def find_customer(base: Path, query: str) -> None:
         )
     if len(matches) > 30:
         print(f"... and {len(matches) - 30} more")
+
+
+def select_customer(base: Path, customer_id: str | None = None, query: str | None = None) -> dict[str, str]:
+    rows = build_index(base)
+    if customer_id:
+        wanted = customer_id.strip().lower()
+        matches = [r for r in rows if r["customer_id"].lower() == wanted]
+    else:
+        q = normalize(query or "")
+        matches = [
+            r
+            for r in rows
+            if q
+            and (
+                q in normalize(r.get("customer_id", ""))
+                or q in normalize(r.get("display_name", ""))
+                or q in normalize(r.get("aliases", ""))
+                or q in normalize(r.get("path", ""))
+            )
+        ]
+    if not matches:
+        raise SystemExit("No matching customer profile.")
+    if len(matches) > 1:
+        print("Multiple matching customers. Please specify --customer-id:")
+        for r in matches[:20]:
+            print(f"- {r['customer_id']} | {r['display_name']} | {r['path']}")
+        raise SystemExit(2)
+    return matches[0]
+
+
+def customer_documents(base: Path, row: dict[str, str]) -> list[tuple[Path, str]]:
+    customer_id = row.get("customer_id", "")
+    docs: list[tuple[Path, str]] = []
+    profile_path = base / row["path"]
+    if profile_path.exists():
+        docs.append((profile_path, profile_path.read_text(encoding="utf-8", errors="ignore")))
+    allowed_roots = {"01-客户档案", "02-客户事件流", "03-业务模块", "06-服务跟进"}
+    if customer_id:
+        for path in md_files(base):
+            rel = str(path.relative_to(base))
+            if rel == row["path"]:
+                continue
+            if not path.relative_to(base).parts or path.relative_to(base).parts[0] not in allowed_roots:
+                continue
+            if customer_id.lower() in rel.lower():
+                docs.append((path, path.read_text(encoding="utf-8", errors="ignore")))
+    return docs
+
+
+def compact_evidence(text: str, patterns: list[str], limit: int = 5) -> list[str]:
+    evidence: list[str] = []
+    for line in text.splitlines():
+        clean = line.strip(" -\t")
+        if not clean or len(clean) < 4:
+            continue
+        if any(re.search(pattern, clean, re.IGNORECASE) for pattern in patterns):
+            if clean not in evidence:
+                evidence.append(clean[:160])
+        if len(evidence) >= limit:
+            break
+    return evidence
+
+
+def has_confirmed_signal(text: str, signal: str) -> bool:
+    """Return true when a signal appears outside an obvious missing/pending context."""
+    if not signal:
+        return False
+    pattern = re.escape(signal)
+    for match in re.finditer(pattern, text, re.IGNORECASE):
+        start = max(0, match.start() - 80)
+        end = min(len(text), match.end() + 80)
+        window = text[start:end]
+        if re.search(r"(待补充|未提供|缺少|缺|需要补充|需要整理|待确认|未确认|补齐|补充|请客户提供)", window):
+            continue
+        return True
+    return False
+
+
+def infer_customer_insights(text: str, row: dict[str, str]) -> dict[str, list[str]]:
+    t = text.lower()
+    needs = as_list(row.get("needs")) or []
+    risks = as_list(row.get("risks")) or []
+    opportunities = as_list(row.get("opportunities")) or []
+    concerns = as_list(row.get("concerns")) or []
+
+    def add(target: list[str], item: str) -> None:
+        if item not in target:
+            target.append(item)
+
+    if re.search(r"(重疾|医疗险|寿险|意外险|保单|保障|保险)", text):
+        add(needs, "保险保障规划")
+    if re.search(r"(孩子|子女|父母|配偶|已婚|家庭|房贷|家庭责任)", text):
+        add(needs, "家庭责任保障")
+        add(opportunities, "家庭保障缺口分析")
+    if re.search(r"(体检|结节|甲状腺|既往症|住院|手术|病历|健康告知|核保)", text):
+        add(risks, "健康告知/核保不确定性")
+    if re.search(r"(预算|缴费|保费|压力|贵|便宜|收入)", text):
+        add(concerns, "预算与缴费压力")
+    if re.search(r"(理赔|拒赔|投诉|纠纷)", text):
+        add(risks, "理赔/纠纷处理风险")
+    if re.search(r"(合作|渠道|转介绍|介绍)", text):
+        add(opportunities, "转介绍/合作机会")
+    if re.search(r"(知识库|ai|agent|自动化|工作流|系统)", t):
+        add(needs, "AI/知识库工作流服务")
+        add(opportunities, "知识服务或系统搭建机会")
+    if re.search(r"(犹豫|担心|不信任|焦虑|怕|顾虑)", text):
+        add(concerns, "信任或决策顾虑")
+
+    return {
+        "needs": needs,
+        "risks": risks,
+        "opportunities": opportunities,
+        "concerns": concerns,
+    }
+
+
+def infer_information_gaps(text: str, row: dict[str, str]) -> list[dict[str, str]]:
+    gaps: list[dict[str, str]] = []
+
+    def add(item: str, why: str, how: str, priority: str) -> None:
+        if not any(g["信息项"] == item for g in gaps):
+            gaps.append({"信息项": item, "为什么需要": why, "获取方式": how, "优先级": priority})
+
+    if "insurance" in row.get("business_line", "") or re.search(r"(保险|保单|重疾|医疗险|核保)", text):
+        if not any(has_confirmed_signal(text, item) for item in ["已有保单", "保单截图", "保障责任", "保额"]):
+            add("已有保单", "判断保障缺口和重复配置", "请客户提供保单截图或保单整理表", "高")
+        if re.search(r"(体检|结节|既往症|住院|手术|病历|核保)", text) and not any(
+            has_confirmed_signal(text, item) for item in ["检查报告", "体检报告", "病历", "复查", "分级", "大小"]
+        ):
+            add("健康异常详情", "判断核保路径和沟通边界", "补充体检报告、病历或复查结果", "高")
+        if not any(has_confirmed_signal(text, item) for item in ["预算", "保费", "缴费", "年收入", "收入"]):
+            add("预算/缴费承受能力", "判断方案是否可持续", "下次沟通确认预算区间和缴费偏好", "中")
+        if not any(has_confirmed_signal(text, item) for item in ["家庭责任", "房贷", "孩子", "父母", "配偶", "收入来源"]):
+            add("家庭责任与收入结构", "判断保障优先级", "补充家庭成员、负债、收入来源", "中")
+
+    if "consulting" in row.get("business_line", "") or re.search(r"(咨询|项目|方案|交付|合作)", text):
+        if not any(has_confirmed_signal(text, item) for item in ["目标", "期望", "要解决", "结果", "交付"]):
+            add("明确目标", "判断服务范围和交付结果", "请客户描述理想结果和当前问题", "高")
+        if not any(has_confirmed_signal(text, item) for item in ["预算", "报价", "费用", "投入"]):
+            add("预算范围", "判断方案颗粒度和投入边界", "确认可接受预算或资源投入", "中")
+        if not any(has_confirmed_signal(text, item) for item in ["决策人", "负责人", "老板", "团队", "审批"]):
+            add("决策链条", "判断推进方式", "确认决策人、使用人和影响人", "中")
+
+    if not row.get("next_action"):
+        add("下一步动作", "避免客户进入无人跟进状态", "设定最小下一步动作和日期", "高")
+    if row.get("info_completeness") in {"", "L0", "L1"}:
+        add("基础客户信息", "当前信息不足以形成稳定判断", "补充来源、联系方式锚点、需求背景", "高")
+
+    return gaps
+
+
+def write_customer_analysis(base: Path, customer_id: str | None = None, query: str | None = None) -> None:
+    row = select_customer(base, customer_id=customer_id, query=query)
+    docs = customer_documents(base, row)
+    full_text = "\n\n".join(text for _, text in docs)
+    insights = infer_customer_insights(full_text, row)
+    gaps = infer_information_gaps(full_text, row)
+    evidence = {
+        "needs": compact_evidence(full_text, [r"需求|想|了解|保障|保险|咨询|方案|项目|合作"]),
+        "risks": compact_evidence(full_text, [r"风险|体检|结节|既往症|病历|核保|理赔|投诉|纠纷|预算|压力"]),
+        "actions": compact_evidence(full_text, [r"下一步|跟进|约|补|确认|周|明天|今天|尽快|方案"]),
+    }
+    out_dir = base / "04-方案与分析" / row["customer_id"]
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out = out_dir / "客户深度分析.md"
+    lines = [
+        f"# 客户深度分析：{row['display_name'] or row['customer_id']}",
+        "",
+        "## 结论先行",
+        "",
+        "当前客户分析基于已有档案、事件流和业务模块生成。请把“推断”作为辅助判断，不要替代人工复核。",
+        "",
+        "## 当前状态",
+        "",
+        f"- 客户编号：{row['customer_id']}",
+        f"- 客户类型：{row['customer_type']}",
+        f"- 业务线：{row['business_line']}",
+        f"- 阶段：{row['stage']}",
+        f"- 信息完整度：{row['info_completeness']}",
+        f"- 下一步动作：{row['next_action'] or '未设置'}",
+        "",
+        "## 关键需求",
+    ]
+    lines += [f"- {item}" for item in insights["needs"]] or ["- 暂未形成明确需求洞察"]
+    lines += ["", "## 关键风险"]
+    lines += [f"- {item}" for item in insights["risks"]] or ["- 暂未识别明显风险"]
+    lines += ["", "## 潜在机会"]
+    lines += [f"- {item}" for item in insights["opportunities"]] or ["- 暂未识别明显机会"]
+    lines += ["", "## 关键顾虑"]
+    lines += [f"- {item}" for item in insights["concerns"]] or ["- 暂未识别明显顾虑"]
+    lines += ["", "## 信息缺口", "", "| 信息项 | 为什么需要 | 获取方式 | 优先级 |", "|---|---|---|---|"]
+    lines += [f"| {g['信息项']} | {g['为什么需要']} | {g['获取方式']} | {g['优先级']} |" for g in gaps] or ["| 暂无 | 暂无明显缺口 | - | - |"]
+    lines += ["", "## 证据摘录", "", "### 需求相关"]
+    lines += [f"- {item}" for item in evidence["needs"]] or ["- 暂无直接摘录"]
+    lines += ["", "### 风险相关"]
+    lines += [f"- {item}" for item in evidence["risks"]] or ["- 暂无直接摘录"]
+    lines += ["", "### 动作相关"]
+    lines += [f"- {item}" for item in evidence["actions"]] or ["- 暂无直接摘录"]
+    lines += [
+        "",
+        "## 下一步建议",
+        "",
+        "- 先补齐高优先级信息缺口。",
+        "- 只在事实足够时生成客户可读版方案。",
+        "- 涉及健康、理赔、法律、财务承诺时保守表达并人工复核。",
+    ]
+    out.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    write_insight_cards(base, row, insights, evidence)
+    print(f"Wrote customer analysis: {out}")
+
+
+def write_information_gaps(base: Path, customer_id: str | None = None, query: str | None = None) -> None:
+    row = select_customer(base, customer_id=customer_id, query=query)
+    docs = customer_documents(base, row)
+    full_text = "\n\n".join(text for _, text in docs)
+    gaps = infer_information_gaps(full_text, row)
+    out_dir = base / "04-方案与分析" / row["customer_id"]
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out = out_dir / "信息缺口清单.md"
+    lines = [
+        f"# 信息缺口清单：{row['display_name'] or row['customer_id']}",
+        "",
+        "| 信息项 | 为什么需要 | 获取方式 | 优先级 |",
+        "|---|---|---|---|",
+    ]
+    lines += [f"| {g['信息项']} | {g['为什么需要']} | {g['获取方式']} | {g['优先级']} |" for g in gaps] or ["| 暂无 | 暂无明显缺口 | - | - |"]
+    out.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    print(f"Wrote information gaps: {out}")
+
+
+def write_insight_cards(base: Path, row: dict[str, str], insights: dict[str, list[str]], evidence: dict[str, list[str]]) -> None:
+    out_dir = base / "10-客户洞察" / row["customer_id"]
+    out_dir.mkdir(parents=True, exist_ok=True)
+    today = date.today().isoformat()
+    type_map = {
+        "needs": "需求洞察",
+        "risks": "风险洞察",
+        "opportunities": "机会洞察",
+        "concerns": "顾虑洞察",
+    }
+    for key, label in type_map.items():
+        for idx, conclusion in enumerate(insights.get(key, [])[:8], start=1):
+            safe = re.sub(r"[^\w\u4e00-\u9fff-]+", "", conclusion)[:24] or label
+            out = out_dir / f"INSIGHT-{today}-{label}-{idx}-{safe}.md"
+            if out.exists():
+                continue
+            evidence_items = evidence.get("risks" if key == "risks" else "needs", [])
+            lines = [
+                "---",
+                "type: customer_insight",
+                f"customer_id: {row['customer_id']}",
+                f"insight_type: {label}",
+                f"confidence: medium",
+                f"status: pending_review",
+                f"created: {today}",
+                "---",
+                "",
+                f"# {label}：{conclusion}",
+                "",
+                "## 洞察结论",
+                "",
+                conclusion,
+                "",
+                "## 证据",
+            ]
+            lines += [f"- {item}" for item in evidence_items] or ["- 待补充证据"]
+            lines += ["", "## 建议动作", "", "- 人工复核后决定是否进入方案或跟进计划。"]
+            out.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
 def score_by_keywords(text: str) -> dict[str, object]:
@@ -386,6 +728,179 @@ def score_intake(text: str) -> None:
     print(json.dumps(result, ensure_ascii=False, indent=2))
 
 
+def load_product(base: Path, product_id: str | None = None, product_file: str | None = None) -> tuple[Path, dict[str, object], str]:
+    if product_file:
+        path = Path(product_file)
+        if not path.is_absolute():
+            path = (Path.cwd() / path).resolve()
+        text = path.read_text(encoding="utf-8", errors="ignore")
+        return path, extract_frontmatter(text), text
+    wanted = (product_id or "").strip().lower()
+    products_dir = base / "09-产品与机会" / "products"
+    matches: list[tuple[Path, dict[str, object], str]] = []
+    for path in products_dir.glob("*.md") if products_dir.exists() else []:
+        text = path.read_text(encoding="utf-8", errors="ignore")
+        fm = extract_frontmatter(text)
+        haystack = normalize(
+            scalar(fm.get("product_id", "")) + "\n" + scalar(fm.get("product_name", "")) + "\n" + path.name
+        )
+        if wanted and wanted in haystack:
+            matches.append((path, fm, text))
+    if not matches:
+        raise SystemExit("No matching product profile. Create one under 09-产品与机会/products or pass --product-file.")
+    if len(matches) > 1:
+        print("Multiple matching products. Please specify --product-id or --product-file:")
+        for path, fm, _ in matches[:20]:
+            print(f"- {scalar(fm.get('product_id', ''))} | {scalar(fm.get('product_name', ''))} | {path}")
+        raise SystemExit(2)
+    return matches[0]
+
+
+def score_product_match(customer_text: str, row: dict[str, str], product_fm: dict[str, object], product_text: str) -> dict[str, object]:
+    signals = as_list(product_fm.get("matching_signals"))
+    risks = as_list(product_fm.get("risk_signals"))
+    suitable = as_list(product_fm.get("suitable_for"))
+    not_suitable = as_list(product_fm.get("not_suitable_for"))
+    required = as_list(product_fm.get("required_information"))
+    haystack = normalize(customer_text + "\n" + json.dumps(row, ensure_ascii=False))
+
+    matched_signals: list[str] = []
+    risk_hits: list[str] = []
+    negative_hits: list[str] = []
+    missing_required: list[str] = []
+
+    for item in signals + suitable:
+        if item and normalize(item) in haystack:
+            matched_signals.append(item)
+    for item in risks:
+        if item and normalize(item) in haystack:
+            risk_hits.append(item)
+    for item in not_suitable:
+        if item and normalize(item) in haystack:
+            negative_hits.append(item)
+    for item in required:
+        if item and not has_confirmed_signal(customer_text, item):
+            missing_required.append(item)
+
+    # Keyword fallback when product profile is still rough.
+    product_haystack = product_text + "\n" + scalar(product_fm.get("product_name", ""))
+    fallback_keywords = []
+    if re.search(r"(重疾|医疗|保险|保单|保障)", product_haystack):
+        fallback_keywords = ["保险", "保障", "重疾", "医疗险", "保单", "家庭责任", "孩子", "父母", "体检", "核保"]
+    elif re.search(r"(知识库|ai|agent|自动化|系统|工作流)", product_haystack, re.IGNORECASE):
+        fallback_keywords = ["知识库", "AI", "Agent", "自动化", "工作流", "系统", "文档"]
+    for keyword in fallback_keywords:
+        if normalize(keyword) in haystack and keyword not in matched_signals:
+            matched_signals.append(keyword)
+
+    completeness_bonus = {"L5": 15, "L4": 12, "L3": 8, "L2": 4, "L1": 1, "L0": 0}.get(row.get("info_completeness", ""), 0)
+    stage_bonus = 10 if row.get("stage") in {"qualified", "analysis", "solution", "servicing"} else 0
+    priority_bonus = {"A": 10, "B": 5, "C": 2}.get(row.get("priority", ""), 0)
+    score = len(set(matched_signals)) * 12 + completeness_bonus + stage_bonus + priority_bonus
+    score -= len(set(risk_hits)) * 3
+    score -= len(set(negative_hits)) * 20
+    score -= min(len(set(missing_required)) * 4, 20)
+    score = max(0, min(100, score))
+
+    if score >= 75:
+        level = "高匹配"
+    elif score >= 50:
+        level = "中匹配"
+    elif score >= 25:
+        level = "低匹配"
+    else:
+        level = "暂不匹配"
+
+    return {
+        "score": score,
+        "level": level,
+        "matched_signals": sorted(set(matched_signals)),
+        "risk_hits": sorted(set(risk_hits)),
+        "negative_hits": sorted(set(negative_hits)),
+        "missing_required": sorted(set(missing_required)),
+    }
+
+
+def write_product_matches(base: Path, product_id: str | None = None, product_file: str | None = None) -> None:
+    product_path, product_fm, product_text = load_product(base, product_id=product_id, product_file=product_file)
+    product_name = scalar(product_fm.get("product_name", "")) or product_path.stem
+    product_code = scalar(product_fm.get("product_id", "")) or product_path.stem
+    rows = [r for r in build_index(base) if r.get("status") != "archived"]
+    results = []
+    for row in rows:
+        docs = customer_documents(base, row)
+        full_text = "\n\n".join(text for _, text in docs)
+        match = score_product_match(full_text, row, product_fm, product_text)
+        if match["score"] > 0:
+            results.append((row, match))
+    results.sort(key=lambda item: int(item[1]["score"]), reverse=True)
+    out_dir = base / "09-产品与机会" / "matching"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out = out_dir / f"{product_code}-潜在客户清单.md"
+    lines = [
+        f"# 产品潜在客户清单：{product_name}",
+        "",
+        f"- 产品编号：{product_code}",
+        f"- 生成日期：{date.today().isoformat()}",
+        "",
+        "| 客户 | 匹配度 | 等级 | 匹配原因 | 风险点 | 缺口 | 建议动作 | 路径 |",
+        "|---|---:|---|---|---|---|---|---|",
+    ]
+    for row, match in results[:100]:
+        reasons = "、".join(match["matched_signals"]) or "待人工判断"
+        risks = "、".join(match["risk_hits"] + match["negative_hits"]) or "-"
+        gaps = "、".join(match["missing_required"]) or "-"
+        action = "先补齐缺口后再沟通" if match["missing_required"] else "可进入人工复核和沟通准备"
+        lines.append(
+            f"| {row['customer_id']} {row['display_name']} | {match['score']} | {match['level']} | "
+            f"{reasons} | {risks} | {gaps} | {action} | {row['path']} |"
+        )
+    if not results:
+        lines.append("| 暂无 | 0 | 暂不匹配 | - | - | - | - | - |")
+    out.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    print(f"Wrote product match list: {out}")
+
+
+def write_operation_dashboard(base: Path) -> None:
+    rows = build_index(base)
+    active = [r for r in rows if r.get("status") == "active"]
+    missing_action = [r for r in active if not r.get("next_action")]
+    high_value = [r for r in active if r.get("priority") in {"A", "B"} and r.get("info_completeness") in {"L3", "L4", "L5"}]
+    low_info = [r for r in active if r.get("info_completeness") in {"", "L0", "L1"}]
+    solution_ready = [r for r in active if r.get("info_completeness") in {"L4", "L5"} and r.get("solution_status") != "ready"]
+
+    out = base / "90-索引与看板" / "本周经营看板.md"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    lines = [
+        "# 本周经营看板",
+        "",
+        f"- 生成日期：{date.today().isoformat()}",
+        f"- 活跃客户：{len(active)}",
+        f"- 缺下一步动作：{len(missing_action)}",
+        f"- 高价值可经营客户：{len(high_value)}",
+        f"- 信息不足客户：{len(low_info)}",
+        f"- 可进入方案复核客户：{len(solution_ready)}",
+        "",
+        "## 本周优先跟进",
+        "",
+        "| 客户 | 阶段 | 完整度 | 优先级 | 下一步动作 | 路径 |",
+        "|---|---|---|---|---|---|",
+    ]
+    prioritized = sorted(active, key=lambda r: (r.get("priority") != "A", r.get("next_followup_date") or "9999-99-99"))[:30]
+    lines += [
+        f"| {r['customer_id']} {r['display_name']} | {r['stage']} | {r['info_completeness']} | {r['priority']} | {r['next_action'] or '未设置'} | {r['path']} |"
+        for r in prioritized
+    ] or ["| 暂无 | - | - | - | - | - |"]
+    lines += ["", "## 缺少下一步动作"]
+    lines += [f"- {r['customer_id']} | {r['display_name']} | {r['path']}" for r in missing_action[:50]] or ["- 暂无"]
+    lines += ["", "## 信息不足但仍活跃"]
+    lines += [f"- {r['customer_id']} | {r['display_name']} | {r['info_completeness']} | {r['path']}" for r in low_info[:50]] or ["- 暂无"]
+    lines += ["", "## 可进入深度分析/方案复核"]
+    lines += [f"- {r['customer_id']} | {r['display_name']} | {r['info_completeness']} | {r['path']}" for r in solution_ready[:50]] or ["- 暂无"]
+    out.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    print(f"Wrote operation dashboard: {out}")
+
+
 def scan_privacy(base: Path) -> list[dict[str, str]]:
     findings = []
     for path in md_files(base):
@@ -506,6 +1021,27 @@ def main() -> None:
     p_audit = sub.add_parser("audit")
     p_audit.add_argument("--base", required=True)
 
+    p_analyze = sub.add_parser("analyze-customer")
+    p_analyze.add_argument("--base", required=True)
+    analyze_group = p_analyze.add_mutually_exclusive_group(required=True)
+    analyze_group.add_argument("--customer-id")
+    analyze_group.add_argument("--query")
+
+    p_gaps = sub.add_parser("gaps")
+    p_gaps.add_argument("--base", required=True)
+    gaps_group = p_gaps.add_mutually_exclusive_group(required=True)
+    gaps_group.add_argument("--customer-id")
+    gaps_group.add_argument("--query")
+
+    p_match = sub.add_parser("product-match")
+    p_match.add_argument("--base", required=True)
+    product_group = p_match.add_mutually_exclusive_group(required=True)
+    product_group.add_argument("--product-id")
+    product_group.add_argument("--product-file")
+
+    p_dashboard = sub.add_parser("dashboard")
+    p_dashboard.add_argument("--base", required=True)
+
     p_score = sub.add_parser("score-intake")
     group = p_score.add_mutually_exclusive_group(required=True)
     group.add_argument("--text")
@@ -528,6 +1064,14 @@ def main() -> None:
         find_customer(base, args.query)
     elif args.command == "audit":
         audit_library(base)
+    elif args.command == "analyze-customer":
+        write_customer_analysis(base, customer_id=args.customer_id, query=args.query)
+    elif args.command == "gaps":
+        write_information_gaps(base, customer_id=args.customer_id, query=args.query)
+    elif args.command == "product-match":
+        write_product_matches(base, product_id=args.product_id, product_file=args.product_file)
+    elif args.command == "dashboard":
+        write_operation_dashboard(base)
 
 
 if __name__ == "__main__":

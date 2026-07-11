@@ -29,6 +29,10 @@
   06-服务跟进/
   07-客户分层/
   08-复盘案例/
+  09-产品与机会/
+    products/
+    matching/
+  10-客户洞察/
   90-索引与看板/
   99-模板与规则/
 ```
@@ -90,6 +94,17 @@ next_followup_date:
 tags:
   - 家庭保障
   - 待补充
+needs:
+  - 家庭保障
+risks:
+  - 健康核保不确定
+opportunities:
+  - 保单整理
+concerns:
+  - 预算压力
+product_fit: []
+analysis_status: needs_review
+solution_status: not_ready
 ---
 ```
 
@@ -283,6 +298,9 @@ budget:
 90-索引与看板/信息缺口清单.md
 90-索引与看板/客户分层索引.md
 90-索引与看板/数据质量报告.md
+90-索引与看板/本周经营看板.md
+90-索引与看板/产品机会看板.md
+90-索引与看板/客户洞察索引.md
 ```
 
 客户总索引字段：
@@ -291,3 +309,55 @@ budget:
 | customer_id | 显示名 | 类型 | 业务线 | 阶段 | 完整度 | 优先级 | 下步动作 | 更新日期 | 路径 |
 ```
 
+## 客户洞察卡
+
+客户洞察卡放在：
+
+```text
+10-客户洞察/CUST-0001/
+```
+
+推荐结构：
+
+```yaml
+---
+type: customer_insight
+customer_id: CUST-0001
+insight_type: 需求洞察
+confidence: medium
+status: pending_review
+related_products: []
+created: 2026-07-11
+---
+```
+
+洞察卡用于承接分析结论，不替代原始事件记录。事件记录回答“发生了什么”，洞察卡回答“这意味着什么”。
+
+## 产品/服务画像
+
+产品或服务画像放在：
+
+```text
+09-产品与机会/products/
+```
+
+推荐结构：
+
+```yaml
+---
+type: product_profile
+product_id: PROD-001
+product_name: 某产品或服务
+business_line: insurance
+status: active
+suitable_for: []
+not_suitable_for: []
+matching_signals: []
+risk_signals: []
+required_information: []
+created: 2026-07-11
+updated: 2026-07-11
+---
+```
+
+产品画像用于反向筛选客户，例如“某产品有哪些潜在客户”。
