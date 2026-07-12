@@ -413,6 +413,15 @@ def has_confirmed_signal(text: str, signal: str) -> bool:
     return False
 
 
+def has_confirmed_budget(text: str) -> bool:
+    """Budget is confirmed only when an amount/range/preference is explicit, not just pressure."""
+    if re.search(r"(预算|保费|缴费).{0,12}(\d+|一千|两千|三千|四千|五千|六千|七千|八千|九千|一万|两万|三万|上限|以内|左右|区间|每年|每月|年缴|月缴)", text):
+        return True
+    if re.search(r"(\d+|一千|两千|三千|四千|五千|一万|两万).{0,12}(预算|保费|缴费)", text):
+        return True
+    return False
+
+
 def infer_customer_insights(text: str, row: dict[str, str]) -> dict[str, list[str]]:
     t = text.lower()
     needs = as_list(row.get("needs")) or []
@@ -435,7 +444,7 @@ def infer_customer_insights(text: str, row: dict[str, str]) -> dict[str, list[st
         add(concerns, "预算与缴费压力")
     if re.search(r"(理赔|拒赔|投诉|纠纷)", text):
         add(risks, "理赔/纠纷处理风险")
-    if re.search(r"(合作|渠道|转介绍|介绍)", text):
+    if re.search(r"(愿意转介绍|可以转介绍|继续介绍|渠道合作|合作机会|资源互换|机构合作)", text):
         add(opportunities, "转介绍/合作机会")
     if re.search(r"(知识库|ai|agent|自动化|工作流|系统)", t):
         add(needs, "AI/知识库工作流服务")
@@ -465,7 +474,7 @@ def infer_information_gaps(text: str, row: dict[str, str]) -> list[dict[str, str
             has_confirmed_signal(text, item) for item in ["检查报告", "体检报告", "病历", "复查", "分级", "大小"]
         ):
             add("健康异常详情", "判断核保路径和沟通边界", "补充体检报告、病历或复查结果", "高")
-        if not any(has_confirmed_signal(text, item) for item in ["预算", "保费", "缴费", "年收入", "收入"]):
+        if not has_confirmed_budget(text) and not any(has_confirmed_signal(text, item) for item in ["年收入", "收入区间"]):
             add("预算/缴费承受能力", "判断方案是否可持续", "下次沟通确认预算区间和缴费偏好", "中")
         if not any(has_confirmed_signal(text, item) for item in ["家庭责任", "房贷", "孩子", "父母", "配偶", "收入来源"]):
             add("家庭责任与收入结构", "判断保障优先级", "补充家庭成员、负债、收入来源", "中")
@@ -473,7 +482,7 @@ def infer_information_gaps(text: str, row: dict[str, str]) -> list[dict[str, str
     if "consulting" in row.get("business_line", "") or re.search(r"(咨询|项目|方案|交付|合作)", text):
         if not any(has_confirmed_signal(text, item) for item in ["目标", "期望", "要解决", "结果", "交付"]):
             add("明确目标", "判断服务范围和交付结果", "请客户描述理想结果和当前问题", "高")
-        if not any(has_confirmed_signal(text, item) for item in ["预算", "报价", "费用", "投入"]):
+        if not has_confirmed_budget(text) and not any(has_confirmed_signal(text, item) for item in ["报价", "费用区间", "投入上限"]):
             add("预算范围", "判断方案颗粒度和投入边界", "确认可接受预算或资源投入", "中")
         if not any(has_confirmed_signal(text, item) for item in ["决策人", "负责人", "老板", "团队", "审批"]):
             add("决策链条", "判断推进方式", "确认决策人、使用人和影响人", "中")
@@ -486,6 +495,20 @@ def infer_information_gaps(text: str, row: dict[str, str]) -> list[dict[str, str
     return gaps
 
 
+def make_customer_conclusion(row: dict[str, str], insights: dict[str, list[str]], gaps: list[dict[str, str]]) -> str:
+    needs = "、".join(insights.get("needs", [])[:2]) or "需求尚不明确"
+    risks = "、".join(insights.get("risks", [])[:2]) or "暂未识别明显风险"
+    high_gaps = [g["信息项"] for g in gaps if g.get("优先级") == "高"]
+    if high_gaps:
+        return (
+            f"当前客户具备 {needs}，但仍缺少 {'、'.join(high_gaps[:3])}；"
+            f"主要风险是 {risks}。建议先补齐关键资料，再进入方案或产品推荐。"
+        )
+    if row.get("info_completeness") in {"L4", "L5"}:
+        return f"当前客户资料相对充分，可围绕 {needs} 进入方案复核；仍需关注 {risks}。"
+    return f"当前客户已出现 {needs}，主要风险是 {risks}；建议继续补充信息并设置下一步跟进。"
+
+
 def write_customer_analysis(base: Path, customer_id: str | None = None, query: str | None = None) -> None:
     row = select_customer(base, customer_id=customer_id, query=query)
     docs = customer_documents(base, row)
@@ -495,8 +518,11 @@ def write_customer_analysis(base: Path, customer_id: str | None = None, query: s
     evidence = {
         "needs": compact_evidence(full_text, [r"需求|想|了解|保障|保险|咨询|方案|项目|合作"]),
         "risks": compact_evidence(full_text, [r"风险|体检|结节|既往症|病历|核保|理赔|投诉|纠纷|预算|压力"]),
+        "opportunities": compact_evidence(full_text, [r"机会|转介绍|合作|渠道|保单整理|缺口|复盘|案例"]),
+        "concerns": compact_evidence(full_text, [r"担心|顾虑|犹豫|焦虑|不信任|压力|贵|怕"]),
         "actions": compact_evidence(full_text, [r"下一步|跟进|约|补|确认|周|明天|今天|尽快|方案"]),
     }
+    conclusion = make_customer_conclusion(row, insights, gaps)
     out_dir = base / "04-方案与分析" / row["customer_id"]
     out_dir.mkdir(parents=True, exist_ok=True)
     out = out_dir / "客户深度分析.md"
@@ -505,7 +531,9 @@ def write_customer_analysis(base: Path, customer_id: str | None = None, query: s
         "",
         "## 结论先行",
         "",
-        "当前客户分析基于已有档案、事件流和业务模块生成。请把“推断”作为辅助判断，不要替代人工复核。",
+        conclusion,
+        "",
+        "> 本分析基于已有档案、事件流和业务模块生成。推断仅作辅助判断，不替代人工复核。",
         "",
         "## 当前状态",
         "",
@@ -581,7 +609,13 @@ def write_insight_cards(base: Path, row: dict[str, str], insights: dict[str, lis
             out = out_dir / f"INSIGHT-{today}-{label}-{idx}-{safe}.md"
             if out.exists():
                 continue
-            evidence_items = evidence.get("risks" if key == "risks" else "needs", [])
+            evidence_key = {
+                "needs": "needs",
+                "risks": "risks",
+                "opportunities": "opportunities",
+                "concerns": "concerns",
+            }.get(key, "needs")
+            evidence_items = evidence.get(evidence_key, [])
             lines = [
                 "---",
                 "type: customer_insight",
@@ -796,11 +830,18 @@ def score_product_match(customer_text: str, row: dict[str, str], product_fm: dic
     completeness_bonus = {"L5": 15, "L4": 12, "L3": 8, "L2": 4, "L1": 1, "L0": 0}.get(row.get("info_completeness", ""), 0)
     stage_bonus = 10 if row.get("stage") in {"qualified", "analysis", "solution", "servicing"} else 0
     priority_bonus = {"A": 10, "B": 5, "C": 2}.get(row.get("priority", ""), 0)
-    score = len(set(matched_signals)) * 12 + completeness_bonus + stage_bonus + priority_bonus
-    score -= len(set(risk_hits)) * 3
+    score = len(set(matched_signals)) * 10 + completeness_bonus + stage_bonus + priority_bonus
+    score -= len(set(risk_hits)) * 8
     score -= len(set(negative_hits)) * 20
-    score -= min(len(set(missing_required)) * 4, 20)
+    score -= min(len(set(missing_required)) * 10, 35)
     score = max(0, min(100, score))
+
+    if missing_required:
+        score = min(score, 69)
+    if len(set(risk_hits)) >= 2:
+        score = min(score, 74)
+    if negative_hits:
+        score = min(score, 49)
 
     if score >= 75:
         level = "高匹配"

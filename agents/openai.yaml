@@ -1,6 +1,6 @@
 interface:
   display_name: "客户解决方案库"
-  short_description: "管理客户档案、洞察分析、产品匹配、经营看板与质检"
-  default_prompt: "Use $customer-solution-library to 录入客户信息、生成客户洞察、识别信息缺口、筛选某产品潜在客户、生成方案或经营看板。"
+  short_description: "项目级客户库 Skill：联动知识库，管理档案、洞察、产品匹配与看板"
+  default_prompt: "Use the project skill .claude/skills/customer-solution-library to 管理私有客户库，并与当前知识库协同：真实客户资料写入私有客户库，方法论/模板/脱敏案例写入知识库。"
 policy:
   allow_implicit_invocation: true
