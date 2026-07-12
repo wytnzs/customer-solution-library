@@ -38,10 +38,10 @@
 
 ### Windows：安装到当前项目
 
-先进入你的项目目录，例如知识库项目：
+先进入你的项目目录，例如你的知识库项目：
 
 ```powershell
-cd D:\Claude\wyt知识库
+cd "<你的知识库项目路径>"
 ```
 
 一条指令安装：
@@ -122,7 +122,7 @@ customer-solution-library Skill
 使用项目内 .claude/skills/customer-solution-library。
 
 当前项目是我的知识库，用于保存方法论、模板、产品知识和脱敏案例。
-真实客户库路径是：D:\Claude\客户解决方案库-私有。
+真实客户库路径是：<你的私有客户库路径>。
 
 处理客户信息时：
 1. 真实客户资料只写入私有客户库；
@@ -137,13 +137,27 @@ customer-solution-library Skill
 
 ```text
 使用项目内 .claude/skills/customer-solution-library。
-请在 D:\Claude\客户解决方案库-私有 初始化一个客户库。
+请询问我希望把私有客户库存放在哪里，然后在我确认的路径初始化客户库。
 ```
 
 或手动运行：
 
 ```powershell
-python .claude\skills\customer-solution-library\scripts\customer_library.py init --base D:\Claude\客户解决方案库-私有
+python .claude\skills\customer-solution-library\scripts\customer_library.py init --base "<你的私有客户库路径>"
+```
+
+也可以先设置环境变量，后续命令就不用每次传 `--base`：
+
+Windows PowerShell：
+
+```powershell
+$env:CUSTOMER_LIBRARY_BASE="<你的私有客户库路径>"
+```
+
+macOS / Linux：
+
+```bash
+export CUSTOMER_LIBRARY_BASE="<你的私有客户库路径>"
 ```
 
 初始化后会生成：
@@ -170,7 +184,7 @@ python .claude\skills\customer-solution-library\scripts\customer_library.py init
 
 ```text
 使用项目内 .claude/skills/customer-solution-library。
-客户库路径是 D:\Claude\客户解决方案库-私有。
+客户库路径是 <你的私有客户库路径>。
 
 请处理这条客户信息：
 ……
@@ -197,17 +211,18 @@ python .claude\skills\customer-solution-library\scripts\customer_library.py init
 ## 常用脚本
 
 ```powershell
-python .claude\skills\customer-solution-library\scripts\customer_library.py index --base D:\Claude\客户解决方案库-私有
-python .claude\skills\customer-solution-library\scripts\customer_library.py audit --base D:\Claude\客户解决方案库-私有
-python .claude\skills\customer-solution-library\scripts\customer_library.py analyze-customer --base D:\Claude\客户解决方案库-私有 --customer-id CUST-0001
-python .claude\skills\customer-solution-library\scripts\customer_library.py gaps --base D:\Claude\客户解决方案库-私有 --customer-id CUST-0001
-python .claude\skills\customer-solution-library\scripts\customer_library.py product-match --base D:\Claude\客户解决方案库-私有 --product-id PROD-001
-python .claude\skills\customer-solution-library\scripts\customer_library.py dashboard --base D:\Claude\客户解决方案库-私有
+python .claude\skills\customer-solution-library\scripts\customer_library.py index --base "<你的私有客户库路径>"
+python .claude\skills\customer-solution-library\scripts\customer_library.py audit --base "<你的私有客户库路径>"
+python .claude\skills\customer-solution-library\scripts\customer_library.py analyze-customer --base "<你的私有客户库路径>" --customer-id CUST-0001
+python .claude\skills\customer-solution-library\scripts\customer_library.py gaps --base "<你的私有客户库路径>" --customer-id CUST-0001
+python .claude\skills\customer-solution-library\scripts\customer_library.py product-match --base "<你的私有客户库路径>" --product-id PROD-001
+python .claude\skills\customer-solution-library\scripts\customer_library.py dashboard --base "<你的私有客户库路径>"
 ```
 
 ## 文档
 
 - [客户管理库操作手册](docs/客户管理库操作手册.md)
+- [客户库保存位置规则](references/storage-location-policy.md)
 - [与知识库协同使用规则](references/knowledge-base-integration.md)
 - [客户洞察与深度分析规则](references/customer-insights.md)
 - [产品/服务反向匹配客户规则](references/product-matching.md)

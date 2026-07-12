@@ -30,6 +30,26 @@ v3 的关键升级是：客户库不能只停留在录入和归档，必须进�
 | 团队协同/分享 | 读取 `references/team-collaboration.md`，按权限与分享类型输出 |
 | 数据质量检查 | 读取 `references/data-quality-audit.md`，扫描缺口、重复、过期、隐私风险 |
 
+## 客户库路径规则
+
+不要假设任何用户的电脑路径。不得把 `D:\...`、`C:\...`、`~/...` 或本作者机器路径作为默认客户库路径。
+
+当任务需要读取或写入真实客户库时，必须按顺序确定路径：
+
+1. 如果用户明确提供客户库路径，使用该路径。
+2. 如果环境变量 `CUSTOMER_LIBRARY_BASE` 已设置，可使用该路径。
+3. 如果当前项目中有用户明确指定的配置文件或说明，可按该配置使用。
+4. 如果仍无法确定，先询问用户：“你希望把私有客户库存放在哪里？”
+
+初始化客户库时，可以建议用户选择：
+
+- 当前项目外的私有目录；
+- 用户主目录下的私有文件夹；
+- 已受控的云盘/同步盘私有目录；
+- 团队共享目录，但必须确认权限和隐私边界。
+
+不要把真实客户库默认创建在知识库项目内，除非用户明确要求。
+
 ## 系统分层
 
 采用“Markdown 长期档案 + 结构化索引 + Skill 操作系统”的模式：
@@ -237,6 +257,7 @@ business_line:
 - `references/intake-routing.md`：统一信息入口、信号价值评分、路由规则。
 - `references/data-model.md`：目录结构、字段规范、客户类型设计。
 - `references/workflows.md`：录入、更新、查询、分析、方案、复盘工作流。
+- `references/storage-location-policy.md`：跨平台客户库保存位置选择、路径确认和环境变量规则。
 - `references/knowledge-base-integration.md`：与知识库协同使用、真实数据隔离、脱敏案例回流规则。
 - `references/customer-insights.md`：客户洞察卡、深度分析、信息缺口识别。
 - `references/product-matching.md`：产品/服务画像、潜在客户筛选、产品机会清单。

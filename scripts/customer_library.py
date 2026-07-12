@@ -2,22 +2,27 @@
 """Utilities for the customer-solution-library skill.
 
 Commands:
-  init         --base PATH
-  index        --base PATH
-  find         --base PATH --query TEXT
-  audit        --base PATH
-  analyze-customer --base PATH (--customer-id ID | --query TEXT)
-  gaps         --base PATH (--customer-id ID | --query TEXT)
-  product-match --base PATH (--product-id ID | --product-file PATH)
-  dashboard    --base PATH
+  init         [--base PATH]
+  index        [--base PATH]
+  find         [--base PATH] --query TEXT
+  audit        [--base PATH]
+  analyze-customer [--base PATH] (--customer-id ID | --query TEXT)
+  gaps         [--base PATH] (--customer-id ID | --query TEXT)
+  product-match [--base PATH] (--product-id ID | --product-file PATH)
+  dashboard    [--base PATH]
   score-intake --text TEXT | --file PATH
+
+For commands that operate on a customer library, pass --base explicitly,
+set CUSTOMER_LIBRARY_BASE, or run interactively and enter the path.
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
+import sys
 from collections import defaultdict
 from datetime import date
 from pathlib import Path
@@ -236,6 +241,26 @@ def init_library(base: Path) -> None:
             encoding="utf-8",
         )
     print(f"Initialized customer library: {base}")
+
+
+def resolve_customer_library_path(base_arg: str | None, *, must_exist: bool = False) -> Path:
+    """Resolve customer library path without assuming any OS-specific default."""
+    raw = base_arg or os.environ.get("CUSTOMER_LIBRARY_BASE")
+    if not raw and sys.stdin.isatty():
+        prompt = "请输入私有客户库路径（例如 ~/CustomerSolutionLibrary-Private，或你的云盘/工作目录路径）："
+        try:
+            raw = input(prompt).strip()
+        except EOFError:
+            raw = None
+    if not raw:
+        raise SystemExit(
+            "Missing customer library path. Pass --base <客户库路径>, "
+            "or set CUSTOMER_LIBRARY_BASE, or run interactively and enter the path."
+        )
+    path = Path(raw).expanduser().resolve()
+    if must_exist and not path.exists():
+        raise SystemExit(f"Customer library path does not exist: {path}")
+    return path
 
 
 def build_index(base: Path) -> list[dict[str, str]]:
@@ -1050,38 +1075,38 @@ def main() -> None:
     sub = parser.add_subparsers(dest="command", required=True)
 
     p_init = sub.add_parser("init")
-    p_init.add_argument("--base", required=True)
+    p_init.add_argument("--base")
 
     p_index = sub.add_parser("index")
-    p_index.add_argument("--base", required=True)
+    p_index.add_argument("--base")
 
     p_find = sub.add_parser("find")
-    p_find.add_argument("--base", required=True)
+    p_find.add_argument("--base")
     p_find.add_argument("--query", required=True)
 
     p_audit = sub.add_parser("audit")
-    p_audit.add_argument("--base", required=True)
+    p_audit.add_argument("--base")
 
     p_analyze = sub.add_parser("analyze-customer")
-    p_analyze.add_argument("--base", required=True)
+    p_analyze.add_argument("--base")
     analyze_group = p_analyze.add_mutually_exclusive_group(required=True)
     analyze_group.add_argument("--customer-id")
     analyze_group.add_argument("--query")
 
     p_gaps = sub.add_parser("gaps")
-    p_gaps.add_argument("--base", required=True)
+    p_gaps.add_argument("--base")
     gaps_group = p_gaps.add_mutually_exclusive_group(required=True)
     gaps_group.add_argument("--customer-id")
     gaps_group.add_argument("--query")
 
     p_match = sub.add_parser("product-match")
-    p_match.add_argument("--base", required=True)
+    p_match.add_argument("--base")
     product_group = p_match.add_mutually_exclusive_group(required=True)
     product_group.add_argument("--product-id")
     product_group.add_argument("--product-file")
 
     p_dashboard = sub.add_parser("dashboard")
-    p_dashboard.add_argument("--base", required=True)
+    p_dashboard.add_argument("--base")
 
     p_score = sub.add_parser("score-intake")
     group = p_score.add_mutually_exclusive_group(required=True)
@@ -1095,7 +1120,7 @@ def main() -> None:
         score_intake(text)
         return
 
-    base = Path(args.base).resolve()
+    base = resolve_customer_library_path(args.base, must_exist=args.command != "init")
 
     if args.command == "init":
         init_library(base)
