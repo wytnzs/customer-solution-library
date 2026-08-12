@@ -1,4 +1,4 @@
-# 客户解决方案库数据模型 v2.1
+# 客户解决方案库数据模型 v2.2
 
 ## 推荐目录
 
@@ -84,6 +84,11 @@ stage: lead
 priority: B
 source: 朋友转介绍
 owner: self
+age_range: 31-40
+income_range: 20-50万
+occupation: 教师
+city: 杭州
+family_structure: 已婚有孩
 privacy_level: P2
 info_completeness: L1
 confidence: medium
@@ -107,6 +112,25 @@ analysis_status: needs_review
 solution_status: not_ready
 ---
 ```
+
+## 画像字段
+
+可结构化的画像字段，用于「主要客户画像」聚合、产品↔群体交叉分析，以及 `filter` 结构化筛选（如 `--age 45 --family 已婚有孩`）。有明确表述才填写，容忍缺省（缺省客户不计入该维度统计）。
+
+| 字段 | 含义 | 示例 | 说明 |
+|---|---|---|---|
+| `age_range` | 年龄区间 | `31-40` | 用区间不用精确值，兼顾隐私与统计稳定。capture 遇到「35岁」自动归桶 |
+| `income_range` | 收入区间 | `20-50万` | 同上；「月收入1.5万」会折算年化后归桶 |
+| `occupation` | 职业 | `教师` | 主要职业，取首个匹配 |
+| `city` | 城市 | `杭州` | 主工作/生活城市 |
+| `family_structure` | 家庭结构 | `已婚有孩` | 从家庭线索保守归纳：单身/已婚无孩/已婚有孩/有孩 |
+
+规约：
+
+- 画像字段是「可聚合事实」，与 `tags`/`needs` 这类语义判断分开。
+- 历史档案没有这些字段不用补全也能继续使用；`segment` 会标注覆盖率提示数据缺口。
+- 用户描述里没提到的维度不推断（尤其家庭结构），宁缺毋滥。
+- `capture` 会把画像字段写入 frontmatter 和正文「基础事实」，后续片段可直接在此基础上补充。
 
 ## 生命周期字段
 
@@ -135,6 +159,19 @@ solution_status: not_ready
 - 活跃客户：`status: active` 且通常应有 `next_action`。
 - 沉睡客户：`status: dormant`，可无近期跟进日期，但应说明沉睡原因。
 - 归档客户：`status: archived`，不进入日常跟进看板。
+
+切换状态用 `set-status --customer-id <ID> --status active/dormant/archived [--reason <原因>]`（预览先行、`--apply` 才落盘），改动写进档案「变更记录」，`filter --status archived` 可单独查看归档客户。
+
+## 合并字段
+
+两份档案经人工确认为同一人后，用 `merge --keep <保留ID> --absorb <并入ID>` 合并（预览先行、`--apply` 才落盘）：
+
+| 字段 | 规则 |
+|---|---|
+| `merged_from`（keep 新增） | 记录并入的档案 ID，可多个，如 `[CUST-0006, CUST-0009]` |
+| `merged_into`（absorb 新增） | 记录被并入的保留档案 ID；absorb 同时转为 `status: archived` |
+
+合并行为：aliases/tags/needs/risks/opportunities/concerns/customer_type/business_line 取并集；keep 缺省的画像/来源等标量用 absorb 补；信息完整度与优先级取较高者；`02-客户事件流/<absorb>/` 文件迁入 `<keep>/`；absorb 全文追加进 keep（不丢内容）。已合并的 absorb 再次合并会被拒绝。
 
 ## 客户类型
 
@@ -301,6 +338,8 @@ budget:
 90-索引与看板/本周经营看板.md
 90-索引与看板/产品机会看板.md
 90-索引与看板/客户洞察索引.md
+90-索引与看板/客户群体分析.md
+90-索引与看板/入口评分汇总.md
 ```
 
 客户总索引字段：
@@ -355,9 +394,34 @@ not_suitable_for: []
 matching_signals: []
 risk_signals: []
 required_information: []
+age_fit: []
+income_fit: []
+occupation_fit: []
+city_fit: []
+family_fit: []
 created: 2026-07-11
 updated: 2026-07-11
 ---
 ```
 
-产品画像用于反向筛选客户，例如“某产品有哪些潜在客户”。
+产品画像用于反向筛选客户，例如”某产品有哪些潜在客户”。
+
+## 产品适配画像字段
+
+可选的「适配画像」约束，声明这个产品适配哪类画像，让 `product-match` 把「客户群体 → 产品」反推接进筛选：
+
+| 字段 | 含义 | 示例 |
+|---|---|---|
+| `age_fit` | 适配年龄区间 | `[41-50, 51-60]` |
+| `income_fit` | 适配收入区间 | `[50万以上]` |
+| `occupation_fit` | 适配职业 | `[企业主, 高管]` |
+| `city_fit` | 适配城市 | `[上海, 杭州]` |
+| `family_fit` | 适配家庭结构 | `[已婚无孩, 已婚有孩]` |
+
+规约：
+
+- 与客户侧画像字段取值对齐（年龄/收入用同一套区间）。
+- 空 = 不约束，该维度不参与评分。
+- 匹配为**软信号**：客户画像命中适配列表 +8、偏离 -8、客户缺省该维度不奖不罚；偏离 ≥2 项时匹配分封顶 74（不硬排除）。
+- 明确不适合请用 `not_suitable_for` 硬信号，不要依赖画像偏离。
+- 可先用 `segment` 的「保险类型 × 客户画像」典型画像反推合适人群，再据此填写。

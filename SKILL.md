@@ -19,16 +19,21 @@ v3 的关键升级是：客户库不能只停留在录入和归档，必须进�
 |---|---|
 | 初始化客户库 | 使用 `scripts/customer_library.py init --base <路径>` 创建目录骨架 |
 | 判断信息是否值得入库 | 读取 `references/intake-routing.md`，按 100 分制评分并给出路由 |
+| 批量处理入口池积压 | 使用 `scripts/customer_library.py intake-pool --base <路径>` 一次评分全部待处理/待匹配/待确认入口并生成汇总 |
+| 给一段客户描述抓取入档 | 使用 `scripts/customer_library.py capture --base <路径> --text "<描述>"`；无匹配生成新建档案草稿（含画像字段），有匹配生成更新建议；「可补充项」引导补全高价值缺项（非必填）；疑似命中但证据不足时提示确认而非静默新建；`--apply` 落盘，`--json` 输出机器可读结果 |
+| 客户群体分析 | 使用 `scripts/customer_library.py segment --base <路径>`；按客户类型/业务线/阶段/完整度/优先级/需求标签聚合，并输出「主要客户画像」（年龄/收入/职业/城市/家庭结构众数 + 覆盖率）与「保险类型 × 客户画像」（反推经营侧重）；`--by age/income/occupation/city/family/stage/priority/customer_type/business_line/status/info_completeness` 按单维度钻取，逐取值看客户与典型画像 |
 | 从录音转写/聊天记录摘录客户信息 | 读取 `references/conversation-ingestion.md`，先摘录，再身份匹配 |
 | 查询客户 | 先查索引/文件名/YAML，再按用户指定格式输出 |
 | 生成客户分析/方案 | 读取 `references/customer-insights.md`，读取客户档案、事件流、业务模块，区分事实/推断/待确认 |
 | 识别信息缺口 | 使用 `scripts/customer_library.py gaps --base <路径> --customer-id <ID>`，再人工补充判断 |
+| 归档/唤醒/转入沉睡客户 | 使用 `scripts/customer_library.py set-status --base <路径> --customer-id <ID> --status active/dormant/archived [--reason <原因>]`；预览先行、`--apply` 才落盘，改动写进档案变更记录；`filter --status archived` 可单独查看归档客户 |
+| 确认同一人后合并档案 | 使用 `scripts/customer_library.py merge --base <路径> --keep <保留ID> --absorb <并入ID>`；字段并集、事件流迁入保留档案、并入档案转 archived；预览先行、`--apply` 才落盘 |
 | 筛选某产品潜在客户 | 读取 `references/product-matching.md`，使用产品画像和 `product-match` 命令 |
-| 生成经营看板 | 使用 `scripts/customer_library.py dashboard --base <路径>` |
+| 生成经营看板 | 使用 `scripts/customer_library.py dashboard --base <路径>`；看板含「逾期未跟进」清单，`--json` 可输出机器可读汇总 |
 | 与知识库协同使用 | 读取 `references/knowledge-base-integration.md`，区分知识库方法论层和私有客户数据层 |
 | 分批补全客户信息 | 追加事件记录，更新主档案摘要，不覆盖历史 |
 | 团队协同/分享 | 读取 `references/team-collaboration.md`，按权限与分享类型输出 |
-| 数据质量检查 | 读取 `references/data-quality-audit.md`，扫描缺口、重复、过期、隐私风险 |
+| 数据质量检查 | 读取 `references/data-quality-audit.md`，扫描逾期跟进、缺口、重复、过期、隐私风险；`--json` 可输出机器可读汇总 |
 
 ## 客户库路径规则
 
@@ -272,10 +277,26 @@ business_line:
 ```powershell
 python .claude/skills/customer-solution-library/scripts/customer_library.py init --base <客户库路径>
 python .claude/skills/customer-solution-library/scripts/customer_library.py index --base <客户库路径>
-python .claude/skills/customer-solution-library/scripts/customer_library.py audit --base <客户库路径>
+python .claude/skills/customer-solution-library/scripts/customer_library.py audit --base <客户库路径> [--json]
 python .claude/skills/customer-solution-library/scripts/customer_library.py score-intake --text "<客户信息片段>"
 python .claude/skills/customer-solution-library/scripts/customer_library.py analyze-customer --base <客户库路径> --customer-id CUST-0001
 python .claude/skills/customer-solution-library/scripts/customer_library.py gaps --base <客户库路径> --customer-id CUST-0001
-python .claude/skills/customer-solution-library/scripts/customer_library.py product-match --base <客户库路径> --product-id PROD-001
-python .claude/skills/customer-solution-library/scripts/customer_library.py dashboard --base <客户库路径>
+python .claude/skills/customer-solution-library/scripts/customer_library.py filter --base <客户库路径> --age 41-50 --family 已婚有孩 [--no-product 重疾] [--detail] [--json]
+python .claude/skills/customer-solution-library/scripts/customer_library.py product-match --base <客户库路径> --product-id PROD-001 [--detail]
+python .claude/skills/customer-solution-library/scripts/customer_library.py dashboard --base <客户库路径> [--json]
+python .claude/skills/customer-solution-library/scripts/customer_library.py intake-pool --base <客户库路径> [--json]
+python .claude/skills/customer-solution-library/scripts/customer_library.py capture --base <客户库路径> --text "<客户描述>" [--apply] [--json]
+python .claude/skills/customer-solution-library/scripts/customer_library.py segment --base <客户库路径> [--by age] [--json]
+python .claude/skills/customer-solution-library/scripts/customer_library.py set-status --base <客户库路径> --customer-id CUST-0001 --status archived [--reason 成交结束] [--apply] [--json]
+python .claude/skills/customer-solution-library/scripts/customer_library.py merge --base <客户库路径> --keep CUST-0001 --absorb CUST-0006 [--apply] [--json]
 ```
+
+`find` 按相关度排序（客户ID > 显示名 > 别名 > 来源 > 正文），多词查询按 token 匹配。`filter` 按画像/生命周期/保险类型结构化筛客户：`--age`/`--income` 可传区间（41-50）或数字（45 自动归桶），`--occupation`/`--city`/`--family` 文本子串匹配，`--status`/`--stage`/`--priority` 按生命周期过滤，`--has-product`/`--no-product` 用类型标签或关键词（如"重疾"命中"重疾险"，识别不代表投保确认），`--missing` 筛缺省某字段的客户；条件之间为 AND，`--detail` 打印一句话画像，`--json` 输出纯 JSON。回归验证：
+
+```powershell
+python .claude/skills/customer-solution-library/scripts/test_customer_library.py
+```
+
+`product-match --detail` 额外生成每个命中客户的完整详情文件（一句话画像、阶段/完整度/优先级、匹配原因、画像匹配/偏离、风险点、缺口、建议动作、档案正文节选），实现「名单 → 详情」联动；产品画像可声明「适配画像」字段（`age_fit`/`income_fit`/`occupation_fit`/`city_fit`/`family_fit`，空 = 不约束），客户画像命中适配列表加分、偏离减分（软信号，缺省不奖不罚），把「客户群体 → 产品」反推接进筛选。`capture` 输出新建草稿或更新建议，`--apply` 才落盘；新建草稿会把画像字段（年龄/收入/职业/城市/家庭结构）写入 frontmatter，并输出「可补充项」引导补全高价值缺项（非必填）；只提到称呼、缺第二锚点时会提示「疑似命中」确认，而非静默新建。`segment` 输出按客户类型/业务线/阶段/完整度/优先级/需求标签聚合的群体画像，另含「主要客户画像」众数统计（容忍缺省、标注覆盖率）与「保险类型 × 客户画像」经营侧重反推（基于档案文本识别，需人工复核）；`--by` 按单维度钻取，逐取值输出客户数/覆盖率/客户清单/该取值典型画像（剔除被钻取维度），用于回答「客户群体集中在哪里」。
+
+档案生命周期两个命令都是**预览先行、`--apply` 才落盘**：`set-status` 归档/唤醒/转入沉睡（改 `status` 并写档案变更记录，`filter --status archived` 可单独看归档客户）；`merge` 在确认两份档案是同一人后合并（字段并集、keep 缺省标量用 absorb 补、完整度与优先级取较高者、事件流文件迁入 keep、absorb 转 archived 并标 `merged_into`、absorb 全文追加进 keep 不丢内容；业务模块/分析等目录中带 absorb 编号的文件保留原编号、仍可被 `find` 检索）。

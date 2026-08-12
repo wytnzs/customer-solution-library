@@ -214,3 +214,14 @@ signal_level: unscored
 route: pending_review
 ```
 
+## 批量处理入口池
+
+入口池积压时，用同一套评分一次性处理全部待处理/待匹配/待确认入口：
+
+```powershell
+python scripts/customer_library.py intake-pool --base "<你的私有客户库路径>"
+python scripts/customer_library.py intake-pool --base "<你的私有客户库路径>" --json
+```
+
+输出 `90-索引与看板/入口评分汇总.md`，按分数从高到低排列，便于先处理最值得经营的入口。
+

@@ -72,7 +72,11 @@ required_information:
 
 | 客户 | 匹配度 | 等级 | 匹配原因 | 风险点 | 缺口 | 建议动作 |
 |---|---:|---|---|---|---|---|
+
+## 命中客户详情
 ```
+
+名单表格下方带每个命中客户的详情区：一句话画像、已知需求、匹配原因、风险点、信息缺口、建议动作、档案路径，实现「名单 → 详情」联动。
 
 ## 可执行命令
 
@@ -88,10 +92,17 @@ python scripts/customer_library.py product-match --base <客户库路径> --prod
 python scripts/customer_library.py product-match --base <客户库路径> --product-file <产品画像.md>
 ```
 
+看每个命中客户的完整档案正文节选，加 `--detail`：
+
+```powershell
+python scripts/customer_library.py product-match --base <客户库路径> --product-id PROD-001 --detail
+```
+
 输出文件：
 
 ```text
 09-产品与机会/matching/<产品编号>-潜在客户清单.md
+09-产品与机会/matching/<产品编号>-潜在客户详情.md   （--detail 时额外生成）
 ```
 
 ## 使用原则

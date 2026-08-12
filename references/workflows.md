@@ -15,6 +15,65 @@
 
 不要因为信息不全而拒绝建档。客户库必须允许从 L0 开始。
 
+### 1.1 快速抓取入档：capture
+
+有一整段客户描述时（聊天记录、口述、转写），可用 `capture` 一步走完「匹配已有 or 新建」：
+
+```text
+python scripts/customer_library.py capture --base <客户库路径> --text "<客户描述>" [--apply]
+```
+
+- 先出草稿（未匹配 → 新建档案草稿；已匹配 → 更新建议），确认后 `--apply` 落盘。
+- 匹配规则：完整称呼命中 + 至少一个副锚点，或联系方式命中，才建议并档；仅姓氏前缀不构成并档依据。
+- 疑似命中但证据不足（如只提到「王先生」没有城市/家庭/来源）时，输出「疑似命中」提示要求确认，不静默新建，避免「已有记录却产生重复档案」。
+- 新建草稿会提取画像字段（年龄区间/收入区间/职业/城市/家庭结构）写入 frontmatter 与正文「基础事实」，供群体分析聚合。
+- 输出「可补充项」清单：只提示高价值缺项（家庭结构/预算/健康/年龄/收入/职业/城市/来源），非必填、可忽略、说明为什么需要；用户知道相关信息时可主动补全，补齐后画像与群体分析更准。
+- `--apply` 新建时身份锚点写入档案正文「基础事实」，保证后续片段能二次匹配到该客户。
+- `--apply` 已有客户时只追加事件记录，不覆盖主档案历史。
+- `--json` 输出纯 JSON 供脚本/团队工具消费（含 `suggestions` 可补充项与 `near_miss` 疑似命中）。
+
+### 1.2 客户群体分析：segment
+
+回答「一群客户」的问题（哪些客户可能适合新产品 X、客户多处于什么阶段、我的客户群体集中在哪）：
+
+```text
+python scripts/customer_library.py segment --base <客户库路径> [--by <维度>] [--json]
+```
+
+按客户类型/业务线/阶段/信息完整度/优先级/状态/需求标签聚合活跃客户，输出 `90-索引与看板/客户群体分析.md`。另含两块经营视角：
+
+- **主要客户画像**：对年龄区间/收入区间/职业/城市/家庭结构取众数并给出覆盖率与分布，回答「主要客户是谁、集中在哪」。缺省字段不计入该维度（容忍缺省），数据不全时结论仅供参考。
+- **保险类型 × 客户画像**：从档案文本（已有保单/需求/事件）识别客户涉及的保险类型，交叉客户画像给出「典型画像」，反推代理人擅长/主攻的产品线。识别不代表投保确认，需人工复核。
+
+**单维度钻取 `--by <维度>`**：想看「客户群体集中在哪里」的某个具体面时，按单维度分桶查看，不写文件、仅本次查询：
+
+```text
+python scripts/customer_library.py segment --base <客户库路径> --by age [--json]
+```
+
+支持维度：`age`/`income`/`occupation`/`city`/`family`/`stage`/`priority`/`customer_type`/`business_line`/`status`/`info_completeness`。每个取值输出客户数、覆盖率、客户清单，以及该取值的「典型画像」（其余画像字段取众数，剔除被钻取维度），便于回答「41-50 岁这批客户长什么样、集中在哪」。未填该维度的客户计入 `unknown` 不计入分布。
+
+典型问法：
+
+| 问法 | 命令 |
+|---|---|
+| 客户都集中在什么年龄段 | `segment --by age` |
+| 上海客户是什么画像 | `segment --by city`（取「上海」桶看典型画像） |
+| 各阶段客户分布 | `segment --by stage` |
+
+### 1.3 档案生命周期：set-status / merge
+
+两个命令都**预览先行、`--apply` 才落盘**，改动写进档案「变更记录」。
+
+**归档/唤醒/转入沉睡 `set-status`**：`status` 取值 `active` / `dormant` / `archived`。归档客户默认不进入 `filter`/`dashboard`/`segment` 的活跃统计；要单独看归档客户用 `filter --status archived`（表头会标注「归档客户」）。例：成交结束归档 `set-status --customer-id CUST-0001 --status archived --reason 成交结束 --apply`。
+
+**合并同一人 `merge`**：`capture` 的防误并档只负责「不误合」；当两份档案经人工确认为同一人时（如两个称呼其实是一个人），用 `merge --keep <保留ID> --absorb <并入ID>`：
+
+- 字段并集：aliases/tags/needs/risks/opportunities/concerns/customer_type/business_line 取并集；keep 缺省的画像/来源等标量用 absorb 补；信息完整度与优先级取较高者；
+- 事件流：`02-客户事件流/<absorb>/` 文件迁入 `<keep>/`（重名加 absorb 前缀，不覆盖）；
+- absorb 转 `archived` 并标 `merged_into: <keep>`；absorb 全文追加进 keep（不丢内容）；keep 记录 `merged_from`；
+- 已合并的 absorb 再次合并会被拒绝；业务模块/分析等目录中带 absorb 编号的文件保留原编号、仍可被 `find` 检索，后续可再迁移。
+
 ## 2. 分批补全
 
 每次获得新信息，按“三步更新”：
@@ -51,6 +110,27 @@
 
 4. 读取主档案和最近记录。
 5. 按用户需要输出速览、分析、方案或跟进建议。
+
+按画像/生命周期/保险类型结构化筛客户用 `filter`（条件之间为 AND，排除归档客户）：
+
+```powershell
+python scripts/customer_library.py filter --base <客户库路径> --age 41-50 --family 已婚有孩 --no-product 重疾 [--detail] [--json]
+```
+
+- `--age`/`--income`：传区间（`41-50`/`50万以上`）或数字（`45` 自动归桶；收入按月折算年化归桶）；
+- `--occupation`/`--city`/`--family`：文本子串匹配；
+- `--status`/`--stage`/`--priority`：生命周期过滤（`--status archived` 可查看归档）；
+- `--has-product`/`--no-product`：按保险类型过滤，输入用类型标签或关键词（`重疾` 命中 `重疾险`）；基于档案文本识别，**不代表投保确认**，`--no-product` 用于"还没接触过这类产品"的初筛，结果需人工复核；
+- `--missing <字段>`：筛缺省该字段的客户（如 `income_range`/`next_action`），用于跟进补全排优先级；
+- `--detail` 附加一句话画像，`--json` 输出纯 JSON 供脚本消费。
+
+典型问法 → 命令：
+
+| 用户问 | 命令 |
+|---|---|
+| 45 岁以上、已婚有孩、还没配重疾的客户 | `filter --age 45 --family 已婚有孩 --no-product 重疾` |
+| 上海高收入客户 | `filter --city 上海 --income 50万以上` |
+| 还不知道收入的客户（补全排期） | `filter --missing income_range` |
 
 ## 4. 客户分析
 
@@ -171,6 +251,16 @@ next_followup_date:
 - 风险信号
 - 需要的前置信息
 
+可选加上「适配画像」约束（空 = 不约束），把「客户群体 → 产品」反推接进筛选：
+
+- `age_fit`：适配年龄区间，如 `[41-50, 51-60]`
+- `income_fit`：适配收入区间，如 `[50万以上]`
+- `occupation_fit`：适配职业
+- `city_fit`：适配城市
+- `family_fit`：适配家庭结构
+
+产品匹配时，客户画像字段命中适配列表加分（软信号）、偏离则减分；客户缺省某维度不奖不罚。可先用 `segment` 的「保险类型 × 客户画像」典型画像反推合适的人群，再据此填产品适配字段。
+
 然后执行筛选：
 
 ```powershell
@@ -181,11 +271,12 @@ python scripts/customer_library.py product-match --base <客户库路径> --prod
 
 - 匹配度
 - 匹配原因
+- 画像匹配/偏离（产品声明适配画像时）
 - 风险点
 - 信息缺口
 - 建议动作
 
-高匹配不等于可以直接推荐。涉及保险、健康、理赔、财务承诺时必须人工复核。
+画像偏离是软提示，不是硬排除；明确不适合请用 `not_suitable_for` 硬信号。高匹配不等于可以直接推荐。涉及保险、健康、理赔、财务承诺时必须人工复核。
 
 ## 9. 经营看板
 
@@ -199,10 +290,13 @@ python scripts/customer_library.py dashboard --base <客户库路径>
 
 看板至少包含：
 
+- 逾期未跟进（`next_followup_date` 已过期，含逾期天数）
 - 本周优先跟进
 - 缺下一步动作
 - 信息不足但仍活跃
 - 可进入深度分析/方案复核
+
+需要脚本或团队工具读取看板时，加 `--json` 向 stdout 输出机器可读汇总。
 
 ## 10. 复盘
 
