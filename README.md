@@ -4,7 +4,7 @@
 
 它不是传统 CRM，也不是简单通讯录。它的目标是把聊天记录、录音转写、面谈纪要、保单资料、客户口述、团队反馈等零散信息，沉淀为可分析、可筛选、可跟进、可复盘的长期客户资产。
 
-当前版本：**v3.1**（15 个命令，108 项回归测试全部通过）。
+当前版本：**v3.1**（15 个命令，110 项回归测试全部通过）。
 
 核心链路：
 
@@ -286,7 +286,7 @@ python .claude\skills\customer-solution-library\scripts\customer_library.py merg
 PYTHONIOENCODING=utf-8 python scripts/test_customer_library.py
 ```
 
-测试用临时客户库 fixture 驱动真实 CLI，覆盖预览不落盘、落盘 frontmatter/变更记录、筛选联动、非法输入拒绝、合并字段并集与事件流迁移等 108 项断言。
+测试用临时客户库 fixture 驱动真实 CLI，覆盖预览不落盘、落盘 frontmatter/变更记录、筛选联动、非法输入拒绝、合并字段并集与事件流迁移等 110 项断言。
 
 ## 隐私边界
 
