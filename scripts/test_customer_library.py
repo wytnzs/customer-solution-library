@@ -295,9 +295,11 @@ family_fit: [单身]
         r = run("capture", "--base", str(base), "--text", new_desc)
         check("capture draft reports new customer", r.returncode == 0 and "未命中已有客户" in r.stdout, r.stdout.strip()[:120])
         check("capture draft has structured YAML", "customer_id: CUST-0003" in r.stdout and "info_completeness: L2" in r.stdout, r.stdout.strip()[:200])
+        check("capture draft uses the real name, not a de-identified label",
+              "display_name: 李先生" in r.stdout and "display_name: 李-" not in r.stdout, r.stdout.strip()[:200])
 
         r = run("capture", "--base", str(base), "--text", new_desc, "--apply")
-        new_profile = base / "01-客户档案" / "CUST-0003.md"
+        new_profile = base / "01-客户档案" / "李先生.md"
         check("capture apply writes profile", r.returncode == 0 and new_profile.exists(), str(new_profile))
         draft_text = new_profile.read_text(encoding="utf-8") if new_profile.exists() else ""
         check("capture persists identity anchors", "李先生" in draft_text and "成都" in draft_text and "单身" in draft_text, "anchors missing from profile body")
@@ -306,11 +308,35 @@ family_fit: [单身]
         check("capture re-matches existing customer", "命中已有客户" in r.stdout and "CUST-0003" in r.stdout, r.stdout.strip()[:120])
 
         r = run("capture", "--base", str(base), "--text", "李先生今天打电话说预算一年一万，单身，先咨询寿险", "--apply")
-        event_files = list((base / "02-客户事件流" / "CUST-0003").glob("*-抓取入档*.md")) if (base / "02-客户事件流" / "CUST-0003").exists() else []
+        event_files = list((base / "02-客户事件流" / "李先生").glob("*-抓取入档*.md")) if (base / "02-客户事件流" / "李先生").exists() else []
         check("capture update appends event record", len(event_files) >= 1, str([f.name for f in event_files]))
         # profile body untouched by the update path (no history overwrite)
         after = new_profile.read_text(encoding="utf-8") if new_profile.exists() else ""
         check("capture update does not overwrite profile", after == draft_text, "profile body changed on update")
+
+        # 9a-2. 真实姓名是主标识：档案不按内部编号命名，命令可直接用姓名调用，
+        # 同名档案自动加后缀（此处用已存在的 李先生 做确定性验证，不新增档案）。
+        check("profile is not named by the internal id", not (base / "01-客户档案" / "CUST-0003.md").exists(),
+              str(sorted(p.name for p in (base / "01-客户档案").glob("*.md"))))
+        r = run("analyze-customer", "--base", str(base), "--customer-id", "李先生")
+        check("commands accept the customer name",
+              r.returncode == 0 and (base / "04-方案与分析" / "李先生" / "客户深度分析.md").exists(),
+              r.stdout.strip()[:120])
+        sys.path.insert(0, str(SCRIPT.parent))
+        import customer_library as cl  # noqa: E402  仅用于同名后缀与非法字符的确定性检查
+        check("duplicate names get a numeric suffix and unsafe characters are replaced",
+              cl.unique_profile_stem(base, "李先生") == "李先生-2" and cl.unique_profile_stem(base, "张/伟?") == "张-伟-",
+              f"{cl.unique_profile_stem(base, '李先生')} / {cl.unique_profile_stem(base, '张/伟?')}")
+
+        # 9a-3. 完整姓名识别：真实姓名直接作为档案名；险种/病症等常用词不能当人名。
+        r = run("capture", "--base", str(base), "--text", "周敏，南京，38岁，朋友介绍，想了解重疾险", "--json")
+        cap = json.loads(r.stdout) if r.returncode == 0 else {}
+        check("capture recognizes a full real name", cap.get("draft", {}).get("display_name") == "周敏",
+              str(cap.get("draft")))
+        r = run("capture", "--base", str(base), "--text", "王先生最近体检发现高血压，想了解重疾险", "--json")
+        cap = json.loads(r.stdout) if r.returncode == 0 else {}
+        check("medical and product terms are not mistaken for names",
+              cap.get("draft", {}).get("display_name") == "王先生", str(cap.get("draft")))
 
         # capture --json: pure JSON, action=update for matched customer
         r = run("capture", "--base", str(base), "--text", "李先生预算一年一万，单身", "--json")
@@ -374,7 +400,7 @@ family_fit: [单身]
 
         # 9e. 画像字段持久化到新建档案：--apply 后 frontmatter 有 age_range 等。
         r = run("capture", "--base", str(base), "--text", rich_desc, "--apply")
-        rich_profile = base / "01-客户档案" / "CUST-0004.md"
+        rich_profile = base / "01-客户档案" / "陈先生.md"
         check("capture apply writes demographic profile", rich_profile.exists(), str(rich_profile))
         if rich_profile.exists():
             rich_text = rich_profile.read_text(encoding="utf-8")

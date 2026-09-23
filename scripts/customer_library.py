@@ -341,12 +341,12 @@ def write_index(base: Path) -> None:
     md = [
         "# 客户总索引",
         "",
-        "| customer_id | 显示名 | 类型 | 业务线 | 状态 | 阶段 | 完整度 | 优先级 | 下步动作 | 更新日期 | 路径 |",
+        "| 显示名 | 编号 | 类型 | 业务线 | 状态 | 阶段 | 完整度 | 优先级 | 下步动作 | 更新日期 | 路径 |",
         "|---|---|---|---|---|---|---|---|---|---|---|",
     ]
     for r in rows:
         md.append(
-            "| {customer_id} | {display_name} | {customer_type} | {business_line} | {status} | "
+            "| {display_name} | {customer_id} | {customer_type} | {business_line} | {status} | "
             "{stage} | {info_completeness} | {priority} | {next_action} | {updated} | {path} |".format(**r)
         )
     (index_dir / "客户总索引.md").write_text("\n".join(md) + "\n", encoding="utf-8")
@@ -418,7 +418,7 @@ def find_customer(base: Path, query: str) -> None:
         return
     for i, item in enumerate(matches[:30], start=1):
         print(
-            f"{i}. [{item['score']}] {item['customer_id']} | {item['display_name']} | "
+            f"{i}. [{item['score']}] {item['display_name']} | {item['customer_id']} | "
             f"{item['type']} | {item['updated']} | {item['path']}"
         )
     if len(matches) > 30:
@@ -562,14 +562,14 @@ def filter_customers(base: Path, args: argparse.Namespace) -> None:
     scope_label = "活跃客户" if not (args.status and normalize(args.status) == "archived") else "归档客户"
     print(f"客户筛选：{'，'.join(criteria)}（命中 {len(matched)} 个{scope_label}）")
     print("")
-    print("| customer_id | 显示名 | 画像 | 阶段 | 优先级 | 需求 | 下步动作 | 路径 |")
+    print("| 显示名 | 编号 | 画像 | 阶段 | 优先级 | 需求 | 下步动作 | 路径 |")
     print("|---|---|---|---|---|---|---|---|")
     for row in matched:
         demog = _demographic_summary(row) or "未填画像"
         needs = "、".join(_split_field(row.get("needs", ""))) or "-"
         action = row.get("next_action") or "-"
         print(
-            f"| {row['customer_id']} | {row['display_name']} | {demog} | "
+            f"| {row['display_name']} | {row['customer_id']} | {demog} | "
             f"{row.get('stage') or '-'} | {row.get('priority') or '-'} | {needs} | {action} | {row['path']} |"
         )
 
@@ -580,7 +580,7 @@ def filter_customers(base: Path, args: argparse.Namespace) -> None:
             one_liner = _customer_one_liner(docs)
             needs = "、".join(_split_field(row.get("needs", ""))) or "-"
             risks = "、".join(_split_field(row.get("risks", ""))) or "-"
-            print(f"## {row['customer_id']} {row['display_name']}")
+            print(f"## {row['display_name']}（{row['customer_id']}）")
             print(f"- 一句话画像：{one_liner or '待补充'}")
             print(f"- 已知需求：{needs}")
             print(f"- 风险点：{risks}")
@@ -593,7 +593,13 @@ def select_customer(base: Path, customer_id: str | None = None, query: str | Non
     rows = build_index(base)
     if customer_id:
         wanted = customer_id.strip().lower()
-        matches = [r for r in rows if r["customer_id"].lower() == wanted]
+        matches = [
+            r
+            for r in rows
+            if r.get("customer_id", "").strip().lower() == wanted
+            or r.get("display_name", "").strip().lower() == wanted
+            or any(a.strip().lower() == wanted for a in _split_field(r.get("aliases", "")))
+        ]
     else:
         q = normalize(query or "")
         matches = [
@@ -803,7 +809,7 @@ def write_customer_analysis(base: Path, customer_id: str | None = None, query: s
         "actions": compact_evidence(body_text, [r"下一步|跟进|约|补|确认|周|明天|今天|尽快|方案"]),
     }
     conclusion = make_customer_conclusion(row, insights, gaps)
-    out_dir = base / "04-方案与分析" / row["customer_id"]
+    out_dir = base / "04-方案与分析" / customer_stem(row)
     out_dir.mkdir(parents=True, exist_ok=True)
     out = out_dir / "客户深度分析.md"
     lines = [
@@ -859,7 +865,7 @@ def write_information_gaps(base: Path, customer_id: str | None = None, query: st
     docs = customer_documents(base, row)
     full_text = "\n\n".join(text for _, text in docs)
     gaps = infer_information_gaps(full_text, row)
-    out_dir = base / "04-方案与分析" / row["customer_id"]
+    out_dir = base / "04-方案与分析" / customer_stem(row)
     out_dir.mkdir(parents=True, exist_ok=True)
     out = out_dir / "信息缺口清单.md"
     lines = [
@@ -874,7 +880,7 @@ def write_information_gaps(base: Path, customer_id: str | None = None, query: st
 
 
 def write_insight_cards(base: Path, row: dict[str, str], insights: dict[str, list[str]], evidence: dict[str, list[str]]) -> None:
-    out_dir = base / "10-客户洞察" / row["customer_id"]
+    out_dir = base / "10-客户洞察" / customer_stem(row)
     out_dir.mkdir(parents=True, exist_ok=True)
     today = date.today().isoformat()
     type_map = {
@@ -1378,6 +1384,30 @@ FAMILY_TERMS = ["孩子", "儿子", "女儿", "父母", "父亲", "母亲", "配
 OCCUPATION_TERMS = ["老师", "医生", "护士", "工程师", "公务员", "个体户", "老板", "企业主", "高管", "程序员", "教师", "会计", "律师", "创业者", "退休", "厂长"]
 SOURCE_TERMS = ["转介绍", "朋友介绍", "客户介绍", "同事", "微信", "公众号", "小红书", "社群", "面谈", "展会", "邻居", "抖音"]
 HONORIFIC_RE = re.compile(r"([一-龥]{1,3})(先生|女士|小姐|老师|经理|老板|姐姐|妹妹|哥哥|大姐|哥|姐)")
+HONORIFIC_TAIL_RE = re.compile(r"(先生|女士|小姐|老师|经理|老板|姐姐|妹妹|哥哥|大姐|哥|姐)$")
+
+# 完整姓名识别（私有客户库存真实姓名，不再用「姓氏-城市-客户」这类脱敏拼名）。
+# 只在客户语境里识别，并用排除表挡掉形似姓名的常用词（险种、病症、财务、家庭、城市）。
+COMMON_SURNAMES = set(
+    "王李张刘陈杨黄赵吴周徐孙马朱胡郭何高林罗郑梁谢宋唐许韩冯邓曹彭曾肖田董袁潘于蒋蔡余杜叶程苏魏吕丁任沈姚卢姜崔钟谭陆汪范金石廖贾夏韦付方白邹孟熊秦邱江尹薛闫段雷侯龙史陶黎贺顾毛郝龚邵万钱严覃武戴莫孔向汤"
+)
+COMPOUND_SURNAMES = ("欧阳", "司马", "上官", "诸葛", "令狐", "皇甫", "尉迟", "长孙", "慕容", "司徒", "端木")
+NAME_TOKEN_SPLIT_RE = re.compile(r"[\s，,。、：:；;！!？?（）()【】\[\]“”\"'\n]+")
+NAME_PREFIX_RE = re.compile(r"^([一-龥]{2,3})(转介绍|介绍|来电|咨询|想了解|想|说|问)")
+NAME_CONTEXT_TERMS = (
+    "保险", "重疾", "寿险", "年金", "医疗", "意外", "咨询", "了解", "想买", "投保",
+    "转介绍", "客户", "保单", "保障", "理财",
+)
+NAME_STOPWORDS = {
+    "高血压", "糖尿病", "重疾", "重疾险", "医疗", "医疗险", "意外", "意外险", "寿险", "年金", "年金险",
+    "教育金", "养老金", "养老", "甲状腺", "乳腺", "结节", "肺结节", "癌症", "肿瘤", "手术", "住院",
+    "体检", "医保", "社保", "公积金", "保单", "理赔", "核保", "保费", "保额", "合同", "条款", "免责",
+    "投保", "续保", "退保", "预算", "收入", "支出", "储蓄", "理财", "基金", "股票", "房产", "车贷",
+    "房贷", "孩子", "父母", "配偶", "朋友", "客户", "同事", "邻居", "家人", "家庭", "公司", "单位",
+    "企业", "门店", "工厂", "学校", "医院", "银行", "杭州", "上海", "北京", "深圳", "广州", "成都",
+    "武汉", "南京", "苏州", "西安", "天津", "重庆", "长沙", "青岛", "厦门", "宁波", "无锡", "佛山",
+    "东莞", "合肥", "昆明", "济南", "福州", "大连", "沈阳", "郑州", "哈尔滨", "温州", "泉州", "石家庄",
+}
 
 # 画像维度：主档案中可聚合的画像字段，用于群体分析。
 # age_range/income_range 用区间而非精确值，兼顾隐私与统计稳定。
@@ -1574,14 +1604,28 @@ def _print_suggestions(suggestions: list[dict[str, str]]) -> None:
     print("  若当前不知道，可跳过；后续沟通中自然补上即可。")
 
 
+def _looks_like_full_name(token: str) -> bool:
+    """判断一个词是否像真实姓名：2-4 个汉字、以常见姓氏开头，且不是常用词或险种名。"""
+    if not (2 <= len(token) <= 4) or not all("一" <= ch <= "龥" for ch in token):
+        return False
+    if token in NAME_STOPWORDS or any(term in token for term in NAME_STOPWORDS):
+        return False
+    if HONORIFIC_TAIL_RE.search(token):
+        return False
+    if token[:2] in COMPOUND_SURNAMES:
+        return len(token) >= 3
+    return token[0] in COMMON_SURNAMES
+
+
 def extract_identity_anchors(text: str) -> dict[str, list[str]]:
     """Pull identity anchors out of a raw fragment. Anchors feed matching and
     the new-profile draft. This is the stable layer; semantic interpretation
     (needs/risks/opportunities) stays with the AI in the skill layer.
 
-    `names` keeps the full honorific term (张先生) so it can be stored as an
-    alias; `surnames` keeps the bare surname (张) for loose matching. The draft
-    display name uses the surname only, per the de-identification rule."""
+    `names` keeps every name form found — the full honorific term (张先生) and the
+    real full name (张伟) — so both can be stored as aliases and re-matched later;
+    `surnames` keeps the bare surname (张) for loose matching. The draft display
+    name prefers the real full name, falling back to the honorific term."""
     anchors: dict[str, list[str]] = {
         "names": [], "surnames": [], "phones": [], "cities": [],
         "family": [], "occupations": [], "sources": [],
@@ -1593,6 +1637,19 @@ def extract_identity_anchors(text: str) -> dict[str, list[str]]:
         surname = m.group(1).strip()
         if surname and surname not in anchors["surnames"]:
             anchors["surnames"].append(surname)
+    # 完整姓名（张伟 / 张伟转介绍）：只在客户语境里识别，并挡掉形似姓名的常用词。
+    if any(term in text for term in NAME_CONTEXT_TERMS):
+        for raw in NAME_TOKEN_SPLIT_RE.split(text):
+            candidate = raw.strip()
+            if not candidate:
+                continue
+            if not _looks_like_full_name(candidate):
+                prefix = NAME_PREFIX_RE.match(candidate)
+                candidate = prefix.group(1) if prefix and _looks_like_full_name(prefix.group(1)) else ""
+            if candidate and candidate not in anchors["names"]:
+                anchors["names"].append(candidate)
+            if candidate and candidate[0] not in anchors["surnames"]:
+                anchors["surnames"].append(candidate[0])
     anchors["phones"] = PHONE_RE.findall(text)
     anchors["cities"] = [c for c in CITY_NAMES if c in text]
     anchors["family"] = [t for t in FAMILY_TERMS if t in text]
@@ -1683,21 +1740,38 @@ def next_customer_id(base: Path) -> str:
     return f"CUST-{max_num + 1:04d}"
 
 
+def customer_stem(row: dict[str, str]) -> str:
+    """档案文件名（真实姓名）的 stem：事件流、分析输出等目录与主档案同名。"""
+    stem = Path(row.get("path", "")).stem
+    return stem or row.get("customer_id", "")
+
+
+def unique_profile_stem(base: Path, display: str) -> str:
+    """把显示名（真实姓名）转成可用的档案文件名；同名自动加 -2、-3 后缀。"""
+    stem = re.sub(r'[\\/:*?"<>|\r\n\t]', "-", (display or "").strip()).strip(" .") or "待确认客户"
+    candidate, n = stem, 2
+    while (base / "01-客户档案" / f"{candidate}.md").exists() or (base / "02-客户事件流" / candidate).exists():
+        candidate = f"{stem}-{n}"
+        n += 1
+    return candidate
+
+
 def build_profile_draft(base: Path, anchors: dict[str, list[str]], text: str) -> tuple[str, dict[str, str]]:
     """Draft a new customer profile from a fragment. The script fills anchorable
     fields only; the AI fills semantic fields (needs/risks/opportunities) after
     review. Returns (file_text, metadata)."""
     cid = next_customer_id(base)
     today = date.today().isoformat()
-    name_parts: list[str] = []
-    # Display name uses the bare surname (de-identified), not the full term.
-    if anchors["surnames"]:
-        name_parts.append(anchors["surnames"][0])
-    if anchors["cities"]:
-        name_parts.append(f"{anchors['cities'][0]}")
-    if anchors["family"]:
-        name_parts.append("家庭客户" if any(t in FAMILY_TERMS for t in ["孩子", "已婚", "配偶"]) else "客户")
-    display = "-".join(name_parts) if name_parts else f"新客户-{today}"
+    # 显示名用真实姓名：优先完整姓名（张伟），其次称呼（张先生），再退到姓氏或待确认。
+    plain_names = [n for n in anchors["names"] if not HONORIFIC_TAIL_RE.search(n)]
+    if plain_names:
+        display = max(plain_names, key=len)
+    elif anchors["names"]:
+        display = max(anchors["names"], key=len)
+    elif anchors["surnames"]:
+        display = anchors["surnames"][0]
+    else:
+        display = f"待确认客户-{today}"
     # Alias stores the full honorific term so a later fragment can re-match it.
     alias_yaml = ", ".join(f'"{n}"' for n in anchors["names"]) if anchors["names"] else "[]"
     source = "、".join(anchors["sources"]) if anchors["sources"] else "待确认"
@@ -1780,7 +1854,12 @@ def capture_customer(base: Path, text: str, apply: bool = False, as_json: bool =
             }
         if not merged:
             body, meta = build_profile_draft(base, anchors, text)
-            payload["draft"] = {"customer_id": meta["customer_id"], "display_name": meta["display_name"], "path": f"01-客户档案/{meta['customer_id']}.md"}
+            stem = unique_profile_stem(base, meta["display_name"])
+            payload["draft"] = {
+                "customer_id": meta["customer_id"],
+                "display_name": meta["display_name"],
+                "path": f"01-客户档案/{stem}.md",
+            }
         print(json.dumps(payload, ensure_ascii=False, indent=2))
         if apply:
             _capture_apply(base, text, anchors, row if merged else None)
@@ -1822,8 +1901,9 @@ def capture_customer(base: Path, text: str, apply: bool = False, as_json: bool =
 
     print("\n【匹配结果】未命中已有客户 → 建议新建档案")
     body, meta = build_profile_draft(base, anchors, text)
-    print(f"  拟用编号: {meta['customer_id']}")
-    print(f"  拟用显示名: {meta['display_name']}")
+    print(f"  拟用姓名: {meta['display_name']}")
+    print(f"  拟建档文件: 01-客户档案/{unique_profile_stem(base, meta['display_name'])}.md")
+    print(f"  内部编号: {meta['customer_id']}")
     print(f"  完整度初判: {meta['completeness']}")
     print("\n【结构化草稿】")
     print(body)
@@ -1839,7 +1919,7 @@ def _capture_apply(base: Path, text: str, anchors: dict[str, list[str]], row: di
     clean for --json consumers."""
     if row:
         cid = row.get("customer_id", "")
-        event_dir = base / "02-客户事件流" / cid
+        event_dir = base / "02-客户事件流" / customer_stem(row)
         event_dir.mkdir(parents=True, exist_ok=True)
         fname = f"{date.today().isoformat()}-抓取入档.md"
         path = event_dir / fname
@@ -1863,7 +1943,7 @@ def _capture_apply(base: Path, text: str, anchors: dict[str, list[str]], row: di
     body, meta = build_profile_draft(base, anchors, text)
     profile_dir = base / "01-客户档案"
     profile_dir.mkdir(parents=True, exist_ok=True)
-    path = profile_dir / f"{meta['customer_id']}.md"
+    path = profile_dir / f"{unique_profile_stem(base, meta['display_name'])}.md"
     path.write_text(body, encoding="utf-8")
     print(f"Wrote new profile: {path}", file=sys.stderr)
 
@@ -1981,12 +2061,13 @@ def merge_customers(base: Path, keep_id: str, absorb_id: str, apply: bool = Fals
     事件流：02-客户事件流/<absorb>/ 文件迁入 <keep>/（重名加前缀，不覆盖）；
     归档：absorb 转 archived 并标 merged_into，正文全文追加进 keep（不丢内容）。
     """
-    keep_id = keep_id.strip().upper()
-    absorb_id = absorb_id.strip().upper()
-    if keep_id == absorb_id:
-        raise SystemExit(f"--keep and --absorb are the same customer: {keep_id}")
     keep = select_customer(base, customer_id=keep_id)
     absorb = select_customer(base, customer_id=absorb_id)
+    # 允许用真实姓名指定客户；落盘时统一换算回内部编号，保证 merged_from / merged_into 可对账。
+    keep_id = keep["customer_id"]
+    absorb_id = absorb["customer_id"]
+    if keep_id == absorb_id:
+        raise SystemExit(f"--keep and --absorb are the same customer: {keep_id}")
     keep_path = base / keep["path"]
     absorb_path = base / absorb["path"]
     keep_text = keep_path.read_text(encoding="utf-8")
@@ -2032,8 +2113,8 @@ def merge_customers(base: Path, keep_id: str, absorb_id: str, apply: bool = Fals
     for f in SCALAR_FILL_FIELDS:
         if not scalar(keep_fm.get(f, "")) and scalar(absorb_fm.get(f, "")):
             filled_scalars.append((f, scalar(absorb_fm.get(f, ""))))
-    event_src = base / "02-客户事件流" / absorb_id
-    event_dst = base / "02-客户事件流" / keep_id
+    event_src = base / "02-客户事件流" / customer_stem(absorb)
+    event_dst = base / "02-客户事件流" / customer_stem(keep)
     events = sorted(event_src.glob("*.md")) if event_src.exists() else []
 
     if not apply:
