@@ -251,11 +251,12 @@ business_line:
 
 硬规则：
 
-1. 不在公开仓库保存真实姓名、手机号、身份证号、银行卡号、完整保单号、病历原件。
-2. 文件名使用客户编号和别名。
-3. 需要 AI 分析时先脱敏。
-4. 涉及保险、健康、法律、财务结论时，用“建议核实/可能/初步判断”，不要承诺承保、赔付或收益。
-5. 给客户看的内容要和内部判断分开。
+1. **私有客户库保存真实数据**：真实姓名、真实称呼、真实联系方式、真实情况——判断和跟进都建立在真实数据上，不用编号、化名或模糊描述替代。
+2. **编号只是内部稳定键**：`customer_id`（CUST-0001）用于合并、引用和对账；档案文件名、事件流目录和一切展示都用真实姓名，同名客户自动加 `-2`、`-3` 后缀。
+3. **真实客户数据只存在私有客户库**：绝不进入公开仓库、知识库、团队分享或任何对外内容。
+4. **对外分享前先脱敏**：真实姓名换成化名或 `ANON-` 编号，去掉手机号、身份证号、银行卡号、完整保单号和病历原件。
+5. 涉及保险、健康、法律、财务结论时，用“建议核实/可能/初步判断”，不要承诺承保、赔付或收益。
+6. 给客户看的内容要和内部判断分开。
 
 ## 可复用资源
 
@@ -279,17 +280,19 @@ python .claude/skills/customer-solution-library/scripts/customer_library.py init
 python .claude/skills/customer-solution-library/scripts/customer_library.py index --base <客户库路径>
 python .claude/skills/customer-solution-library/scripts/customer_library.py audit --base <客户库路径> [--json]
 python .claude/skills/customer-solution-library/scripts/customer_library.py score-intake --text "<客户信息片段>"
-python .claude/skills/customer-solution-library/scripts/customer_library.py analyze-customer --base <客户库路径> --customer-id CUST-0001
-python .claude/skills/customer-solution-library/scripts/customer_library.py gaps --base <客户库路径> --customer-id CUST-0001
+python .claude/skills/customer-solution-library/scripts/customer_library.py analyze-customer --base <客户库路径> --customer-id 张伟
+python .claude/skills/customer-solution-library/scripts/customer_library.py gaps --base <客户库路径> --customer-id 张伟
 python .claude/skills/customer-solution-library/scripts/customer_library.py filter --base <客户库路径> --age 41-50 --family 已婚有孩 [--no-product 重疾] [--detail] [--json]
 python .claude/skills/customer-solution-library/scripts/customer_library.py product-match --base <客户库路径> --product-id PROD-001 [--detail]
 python .claude/skills/customer-solution-library/scripts/customer_library.py dashboard --base <客户库路径> [--json]
 python .claude/skills/customer-solution-library/scripts/customer_library.py intake-pool --base <客户库路径> [--json]
 python .claude/skills/customer-solution-library/scripts/customer_library.py capture --base <客户库路径> --text "<客户描述>" [--apply] [--json]
 python .claude/skills/customer-solution-library/scripts/customer_library.py segment --base <客户库路径> [--by age] [--json]
-python .claude/skills/customer-solution-library/scripts/customer_library.py set-status --base <客户库路径> --customer-id CUST-0001 --status archived [--reason 成交结束] [--apply] [--json]
-python .claude/skills/customer-solution-library/scripts/customer_library.py merge --base <客户库路径> --keep CUST-0001 --absorb CUST-0006 [--apply] [--json]
+python .claude/skills/customer-solution-library/scripts/customer_library.py set-status --base <客户库路径> --customer-id 张伟 --status archived [--reason 成交结束] [--apply] [--json]
+python .claude/skills/customer-solution-library/scripts/customer_library.py merge --base <客户库路径> --keep 张伟 --absorb 张先生 [--apply] [--json]
 ```
+
+客户标识用真实姓名：`--customer-id` 接受真实姓名（如 `张伟`）或内部编号（如 `CUST-0001`），两者等价；档案、事件流与输出目录都按姓名命名，同名自动加 `-2` 后缀。
 
 `find` 按相关度排序（客户ID > 显示名 > 别名 > 来源 > 正文），多词查询按 token 匹配。`filter` 按画像/生命周期/保险类型结构化筛客户：`--age`/`--income` 可传区间（41-50）或数字（45 自动归桶），`--occupation`/`--city`/`--family` 文本子串匹配，`--status`/`--stage`/`--priority` 按生命周期过滤，`--has-product`/`--no-product` 用类型标签或关键词（如"重疾"命中"重疾险"，识别不代表投保确认），`--missing` 筛缺省某字段的客户；条件之间为 AND，`--detail` 打印一句话画像，`--json` 输出纯 JSON。回归验证：
 
