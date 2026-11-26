@@ -26,12 +26,17 @@ set CUSTOMER_LIBRARY_BASE, or run interactively and enter the path.
 from __future__ import annotations
 
 import argparse
+import csv
+import hashlib
+import io
 import json
 import os
 import re
 import sys
+import tempfile
+import zipfile
 from collections import defaultdict
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 
 
@@ -65,6 +70,32 @@ DIRS = [
     "99-模板与规则",
 ]
 
+SCHEMA_VERSION = "4"
+VAULT_INFO_NAME = "库信息.json"
+
+
+def write_vault_info(base: Path, *, create_only: bool = False) -> dict[str, object]:
+    """写入/更新库根目录的库信息。create_only=True 时只读不写（预览用）。"""
+    path = base / VAULT_INFO_NAME
+    today = date.today().isoformat()
+    data: dict[str, object] = {}
+    if path.exists():
+        try:
+            loaded = json.loads(path.read_text(encoding="utf-8"))
+            if isinstance(loaded, dict):
+                data = loaded
+        except Exception:
+            data = {}
+    data.setdefault("name", "客户解决方案库")
+    data.setdefault("created", today)
+    data.setdefault("skill", "customer-solution-library")
+    data["schema_version"] = SCHEMA_VERSION
+    data["directories"] = len(DIRS)
+    data["updated"] = today
+    if not create_only:
+        path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    return data
+
 
 TEMPLATE_PROFILE = """---
 type: customer_profile
@@ -82,6 +113,7 @@ age_range:
 income_range:
 occupation:
 city:
+birthday:
 family_structure:
 privacy_level: P2
 info_completeness: L0
@@ -170,6 +202,21 @@ PHONE_RE = re.compile(r"(?<!\d)1[3-9]\d{9}(?!\d)")
 ID_CARD_RE = re.compile(r"(?<!\d)\d{17}[\dXx](?!\d)")
 BANK_CARD_RE = re.compile(r"(?<!\d)\d{16,19}(?!\d)")
 POLICY_RE = re.compile(r"(保单号|合同号|保单编号)[:：]?\s*[A-Za-z0-9-]{6,}")
+BIRTHDAY_RE = re.compile(r"(?:生日|出生)[:：]?\s*(19|20)?(\d{2})\s*[年\-/\.]\s*(\d{1,2})\s*[月\-/\.]\s*(\d{1,2})\s*日?")
+
+
+def extract_birthday(text: str) -> str:
+    """只认带「生日/出生」上下文的日期，避免把普通日期误当生日。"""
+    match = BIRTHDAY_RE.search(text)
+    if not match:
+        return ""
+    century, year2, month, day = match.groups()
+    year = int(year2) if not century else int(f"{century}{year2}")
+    if not century:
+        year += 1900 if year > 30 else 2000
+    if not (1 <= int(month) <= 12 and 1 <= int(day) <= 31):
+        return ""
+    return f"{year:04d}-{int(month):02d}-{int(day):02d}"
 
 
 def extract_frontmatter(text: str) -> dict[str, object]:
@@ -244,6 +291,7 @@ def init_library(base: Path) -> None:
     base.mkdir(parents=True, exist_ok=True)
     for item in DIRS:
         (base / item).mkdir(parents=True, exist_ok=True)
+    write_vault_info(base)
 
     template_dir = base / "99-模板与规则"
     profile_template = template_dir / "客户档案模板.md"
@@ -310,6 +358,7 @@ def build_index(base: Path) -> list[dict[str, str]]:
                 "income_range": scalar(fm.get("income_range", "")),
                 "occupation": scalar(fm.get("occupation", "")),
                 "city": scalar(fm.get("city", "")),
+                "birthday": scalar(fm.get("birthday", "")),
                 "family_structure": scalar(fm.get("family_structure", "")),
                 "customer_type": scalar(fm.get("customer_type", "")),
                 "business_line": scalar(fm.get("business_line", "")),
@@ -334,7 +383,7 @@ def build_index(base: Path) -> list[dict[str, str]]:
     return rows
 
 
-def write_index(base: Path) -> None:
+def write_index(base: Path, quiet: bool = False) -> None:
     rows = build_index(base)
     index_dir = base / "90-索引与看板"
     index_dir.mkdir(parents=True, exist_ok=True)
@@ -354,7 +403,8 @@ def write_index(base: Path) -> None:
         json.dumps(rows, ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
-    print(f"Indexed {len(rows)} customer profiles.")
+    if not quiet:
+        print(f"Indexed {len(rows)} customer profiles.")
 
 
 def normalize(text: str) -> str:
@@ -795,6 +845,7 @@ def make_customer_conclusion(row: dict[str, str], insights: dict[str, list[str]]
 
 def write_customer_analysis(base: Path, customer_id: str | None = None, query: str | None = None) -> None:
     row = select_customer(base, customer_id=customer_id, query=query)
+    recent = recent_event(base, row)
     docs = customer_documents(base, row)
     full_text = "\n\n".join(text for _, text in docs)
     insights = infer_customer_insights(full_text, row)
@@ -809,6 +860,10 @@ def write_customer_analysis(base: Path, customer_id: str | None = None, query: s
         "actions": compact_evidence(body_text, [r"下一步|跟进|约|补|确认|周|明天|今天|尽快|方案"]),
     }
     conclusion = make_customer_conclusion(row, insights, gaps)
+    recent_line = (
+        f"- {recent['date']}｜{recent['event_type']}｜{recent['summary']}"
+        if recent else "- 还没有事件记录"
+    )
     out_dir = base / "04-方案与分析" / customer_stem(row)
     out_dir.mkdir(parents=True, exist_ok=True)
     out = out_dir / "客户深度分析.md"
@@ -829,6 +884,10 @@ def write_customer_analysis(base: Path, customer_id: str | None = None, query: s
         f"- 阶段：{row['stage']}",
         f"- 信息完整度：{row['info_completeness']}",
         f"- 下一步动作：{row['next_action'] or '未设置'}",
+        "",
+        "## 最近沟通",
+        "",
+        recent_line,
         "",
         "## 关键需求",
     ]
@@ -857,6 +916,7 @@ def write_customer_analysis(base: Path, customer_id: str | None = None, query: s
     ]
     out.write_text("\n".join(lines) + "\n", encoding="utf-8")
     write_insight_cards(base, row, insights, evidence)
+    print("最近沟通：" + (f"{recent['date']} {recent['event_type']}｜{recent['summary']}" if recent else "无记录"))
     print(f"Wrote customer analysis: {out}")
 
 
@@ -1790,6 +1850,9 @@ def build_profile_draft(base: Path, anchors: dict[str, list[str]], text: str) ->
         value = dem.get(key, "")
         if value:
             body = body.replace(f"{key}:\n", f"{key}: {value}\n", 1)
+    birthday = extract_birthday(text)
+    if birthday:
+        body = body.replace("birthday:\n", f"birthday: {birthday}\n", 1)
     # Persist identity anchors into the body's 基础事实 section so later
     # fragments can match on secondary anchors (family/city/source), not just
     # the name. This is what makes the "already exists → update" loop work.
@@ -1801,6 +1864,7 @@ def build_profile_draft(base: Path, anchors: dict[str, list[str]], text: str) ->
         f"- 来源：{'、'.join(anchors['sources']) or '待确认'}",
         f"- 年龄区间：{dem.get('age_range') or '待确认'}",
         f"- 收入区间：{dem.get('income_range') or '待确认'}",
+        f"- 生日：{birthday or '待确认'}",
     ]
     body = body.replace("## 基础事实\n\n", "## 基础事实\n\n" + "\n".join(fact_lines) + "\n", 1)
     return body, {"customer_id": cid, "display_name": display, "completeness": completeness}
@@ -1992,7 +2056,7 @@ def _set_frontmatter_fields(text: str, updates: dict[str, object]) -> str:
     for key, val in updates.items():
         if key not in changed:
             out.append(f"{key}: {_fmt_list([str(v) for v in val])}" if isinstance(val, list) else f"{key}: {val}")
-    return parts[0] + "---" + "\n".join(out) + "---" + parts[2]
+    return parts[0] + "---" + "\n".join(out) + "\n---" + parts[2]
 
 
 def _append_change_note(text: str, note: str) -> str:
@@ -2722,6 +2786,904 @@ def audit_library(base: Path, as_json: bool = False) -> None:
         print(f"Wrote audit report: {out}")
 
 
+# ------------------------------------------------------------ 全生命周期
+# doctor / event / import / remind / export / backup / restore / migrate
+# 这一段对应「安装 → 构建 → 使用 → 持续更新」四个环节，规则见
+# 01-Projects/客户管理系统/迭代循环/验收基准.md。
+
+def _today() -> str:
+    return date.today().isoformat()
+
+
+def _safe_name(value: str, fallback: str = "记录") -> str:
+    cleaned = re.sub(r'[\\/:*?"<>|\r\n\t]', "-", (value or "").strip()).strip(" .")
+    return cleaned or fallback
+
+
+def _write_json(payload: object) -> None:
+    print(json.dumps(payload, ensure_ascii=False, indent=2))
+
+
+# ---- 安装自检 -------------------------------------------------------------
+
+def collect_doctor(base: Path) -> dict[str, object]:
+    issues: list[dict[str, str]] = []
+    checks: list[dict[str, str]] = []
+
+    py_ok = sys.version_info >= (3, 9)
+    checks.append({
+        "id": "python",
+        "status": "pass" if py_ok else "fail",
+        "message": f"Python {sys.version.split()[0]}（要求 3.9 以上）",
+    })
+    if not py_ok:
+        issues.append({"level": "fail", "message": "Python 版本过低，请升级到 3.9 以上再使用本 skill"})
+
+    if base.exists() and not base.is_dir():
+        checks.append({"id": "path", "status": "fail", "message": "路径是文件，不是目录"})
+        issues.append({"level": "fail", "message": f"这个路径是文件，不是目录：{base}。请换成目录路径"})
+        return {
+            "ok": False,
+            "initialized": False,
+            "base": str(base),
+            "schema_version": None,
+            "python": sys.version.split()[0],
+            "checks": checks,
+            "issues": issues,
+            "counts": {"pass": sum(1 for c in checks if c["status"] == "pass"),
+                       "warn": sum(1 for c in checks if c["status"] == "warn"),
+                       "fail": sum(1 for c in checks if c["status"] == "fail")},
+            "next": "换一个目录路径再运行 doctor",
+        }
+
+    if base.exists():
+        writable = os.access(base, os.W_OK)
+        try:
+            with tempfile.NamedTemporaryFile(dir=base, prefix=".doctor-", delete=True):
+                pass
+            writable = True
+        except Exception:
+            writable = False
+    else:
+        probe = base.parent if base.parent.exists() else Path(".")
+        writable = os.access(probe, os.W_OK)
+    checks.append({
+        "id": "writable",
+        "status": "pass" if writable else "fail",
+        "message": "路径可写" if writable else "路径不可写",
+    })
+    if not writable:
+        issues.append({"level": "fail", "message": f"没有写入权限：{base}。换一个私有目录，或调整权限后重试"})
+
+    initialized = (base / "01-客户档案").is_dir()
+    if not initialized:
+        checks.append({"id": "initialized", "status": "warn", "message": "这个路径还不是客户库"})
+        issues.append({"level": "warn", "message": "没有找到 01-客户档案，客户库尚未初始化"})
+        return {
+            "ok": not any(i["level"] == "fail" for i in issues),
+            "initialized": False,
+            "base": str(base),
+            "schema_version": None,
+            "python": sys.version.split()[0],
+            "checks": checks,
+            "issues": issues,
+            "counts": {"pass": sum(1 for c in checks if c["status"] == "pass"),
+                       "warn": sum(1 for c in checks if c["status"] == "warn"),
+                       "fail": sum(1 for c in checks if c["status"] == "fail")},
+            "next": f"python scripts/customer_library.py init --base \"{base}\"",
+        }
+
+    missing = [d for d in DIRS if not (base / d).is_dir()]
+    checks.append({
+        "id": "dirs",
+        "status": "pass" if not missing else "warn",
+        "message": f"目录结构 {len(DIRS) - len(missing)}/{len(DIRS)}",
+    })
+    if missing:
+        issues.append({
+            "level": "warn",
+            "message": "缺少目录：" + "、".join(missing[:6]) + ("等" if len(missing) > 6 else "") + "；运行 init 可补建",
+        })
+
+    info_path = base / VAULT_INFO_NAME
+    schema_version = None
+    if info_path.exists():
+        try:
+            info = json.loads(info_path.read_text(encoding="utf-8"))
+            schema_version = info.get("schema_version")
+        except Exception:
+            info = {}
+        if str(schema_version) == SCHEMA_VERSION:
+            checks.append({"id": "schema", "status": "pass", "message": f"库信息 schema_version={SCHEMA_VERSION}"})
+        else:
+            checks.append({"id": "schema", "status": "warn", "message": f"库信息版本是 {schema_version or '未知'}，当前是 {SCHEMA_VERSION}"})
+            issues.append({"level": "warn", "message": f"库需要迁移到 schema_version={SCHEMA_VERSION}；运行 migrate --apply"})
+    else:
+        checks.append({"id": "schema", "status": "warn", "message": "缺少库信息.json"})
+        issues.append({"level": "warn", "message": f"缺少 {VAULT_INFO_NAME}，无法判断库版本；运行 migrate --apply"})
+
+    rows = build_index(base)
+    index_path = base / "90-索引与看板" / "customer-index.json"
+    if rows and not index_path.exists():
+        checks.append({"id": "index", "status": "warn", "message": f"{len(rows)} 份档案，索引尚未生成"})
+        issues.append({"level": "warn", "message": "客户索引不存在；运行 index 刷新"})
+    elif rows and index_path.exists():
+        newest = max(((base / r["path"]).stat().st_mtime for r in rows if (base / r["path"]).exists()), default=0)
+        if index_path.stat().st_mtime + 0.01 < newest:
+            checks.append({"id": "index", "status": "warn", "message": f"{len(rows)} 份档案，索引可能过期"})
+            issues.append({"level": "warn", "message": "有档案比索引新；运行 index 刷新"})
+        else:
+            checks.append({"id": "index", "status": "pass", "message": f"{len(rows)} 份档案，索引是最新的"})
+    else:
+        checks.append({"id": "index", "status": "pass", "message": "还没有客户档案，索引为空"})
+
+    fails = [i for i in issues if i["level"] == "fail"]
+    warns = [i for i in issues if i["level"] == "warn"]
+    if fails:
+        next_action = "先处理失败项，再继续。"
+    elif warns:
+        next_action = "按提醒逐条处理；也可以先照常用，提醒项不影响数据安全。"
+    elif rows:
+        next_action = "库是健康的。可以 remind 看本周该找谁，或 event 记录一次沟通。"
+    else:
+        next_action = "库是健康的。可以 import 导入客户名单，或 capture 录入第一个客户。"
+    return {
+        "ok": not fails,
+        "initialized": True,
+        "base": str(base),
+        "schema_version": schema_version,
+        "python": sys.version.split()[0],
+        "checks": checks,
+        "issues": issues,
+        "counts": {
+            "pass": len([c for c in checks if c["status"] == "pass"]),
+            "warn": len(warns),
+            "fail": len(fails),
+        },
+        "customers": len(rows),
+        "next": next_action,
+    }
+
+
+def doctor_library(base: Path, as_json: bool = False) -> None:
+    report = collect_doctor(base)
+    if as_json:
+        _write_json(report)
+        return
+    print("# 客户库自检")
+    print()
+    print(f"路径：{report['base']}")
+    print()
+    icon = {"pass": "✅", "warn": "⚠️", "fail": "❌"}
+    for item in report["checks"]:
+        print(f"- {icon.get(item['status'], '•')} {item['message']}")
+    print()
+    counts = report["counts"]
+    print(f"通过 {counts['pass']} 项，提醒 {counts['warn']} 项，失败 {counts['fail']} 项。")
+    if report["issues"]:
+        print()
+        for issue in report["issues"]:
+            print(f"- {icon.get(issue['level'], '•')} {issue['message']}")
+    print()
+    print(f"下一步：{report['next']}")
+    if not report["ok"]:
+        raise SystemExit(1)
+
+
+# ---- 使用：事件记录 -------------------------------------------------------
+
+def _event_dir(base: Path, row: dict[str, str]) -> Path:
+    return base / "02-客户事件流" / customer_stem(row)
+
+
+def recent_event(base: Path, row: dict[str, str]) -> dict[str, str] | None:
+    directory = _event_dir(base, row)
+    files = sorted(directory.glob("*.md")) if directory.exists() else []
+    if not files:
+        return None
+    path = files[-1]
+    text = path.read_text(encoding="utf-8", errors="ignore")
+    fm = extract_frontmatter(text)
+    body = strip_frontmatter(text)
+    summary = ""
+    for line in body.splitlines():
+        clean = line.strip(" -\t")
+        if clean and not clean.startswith("#") and len(clean) >= 2:
+            summary = clean[:120]
+            break
+    return {
+        "date": scalar(fm.get("date", "")) or path.stem[:10],
+        "event_type": scalar(fm.get("event_type", "")) or "记录",
+        "summary": summary,
+        "file": str(path.relative_to(base)),
+    }
+
+
+def record_event(base: Path, customer: str, kind: str | None, text: str,
+                 next_action: str | None, followup_date: str | None,
+                 apply: bool = False, as_json: bool = False) -> None:
+    row = select_customer(base, customer_id=customer)
+    if followup_date:
+        try:
+            date.fromisoformat(followup_date)
+        except ValueError:
+            raise SystemExit("--followup-date 需要 YYYY-MM-DD 格式，例如 2026-12-03")
+    kind = _safe_name(kind or "沟通")
+    today = _today()
+    event_dir = _event_dir(base, row)
+    path = event_dir / f"{today}-{kind}.md"
+    seq = 2
+    while path.exists():
+        path = event_dir / f"{today}-{kind}-{seq}.md"
+        seq += 1
+
+    lines = [
+        "---",
+        "type: customer_event",
+        f"event_type: {kind}",
+        f"date: {today}",
+        f"customer_id: {row['customer_id']}",
+        "source: manual",
+        "---",
+        "",
+        f"# {kind}",
+        "",
+        "## 记录",
+        "",
+        text.strip(),
+    ]
+    if next_action or followup_date:
+        lines += ["", "## 下一步", ""]
+        if next_action:
+            lines.append(f"- 动作：{next_action}")
+        if followup_date:
+            lines.append(f"- 回访日期：{followup_date}")
+    content = "\n".join(lines) + "\n"
+
+    updates: dict[str, object] = {"updated": today}
+    if next_action:
+        updates["next_action"] = next_action
+    if followup_date:
+        updates["next_followup_date"] = followup_date
+    note = f"- {today}：记录{kind}"
+    if next_action:
+        note += f"，下一步：{next_action}"
+    if followup_date:
+        note += f"，回访：{followup_date}"
+
+    payload = {
+        "customer_id": row["customer_id"],
+        "display_name": row["display_name"],
+        "event_type": kind,
+        "date": today,
+        "file": str(path.relative_to(base)),
+        "profile": row["path"],
+        "updates": updates,
+        "applied": bool(apply),
+    }
+    if not apply:
+        if as_json:
+            _write_json(payload)
+        else:
+            print(f"# 事件记录预览：{row['display_name']}（{row['customer_id']}）")
+            print(f"- 类型：{kind}")
+            print(f"- 日期：{today}")
+            print(f"- 将写入：{path.relative_to(base)}")
+            for key, value in updates.items():
+                print(f"- 档案字段：{key} → {value}")
+            print("执行需加 --apply。")
+        return
+
+    profile_path = base / row["path"]
+    profile_text = profile_path.read_text(encoding="utf-8")
+    try:
+        new_profile = _append_change_note(_set_frontmatter_fields(profile_text, updates), note)
+    except ValueError:
+        raise SystemExit(f"档案 frontmatter 不完整，无法更新：{row['path']}")
+    event_dir.mkdir(parents=True, exist_ok=True)
+    path.write_text(content, encoding="utf-8")
+    profile_path.write_text(new_profile, encoding="utf-8")
+    if as_json:
+        _write_json(payload)
+    else:
+        print(f"已记录 {row['display_name']} 的{kind}：{path.relative_to(base)}", file=sys.stderr)
+
+
+# ---- 构建：CSV 批量导入 ---------------------------------------------------
+
+IMPORT_COLUMN_ALIASES: dict[str, tuple[str, ...]] = {
+    "name": ("姓名", "客户姓名", "名字", "称呼", "客户", "name"),
+    "phone": ("手机", "手机号", "手机号码", "电话", "联系电话", "phone", "tel", "mobile"),
+    "city": ("城市", "所在城市", "地区", "城市/地区", "city"),
+    "birthday": ("生日", "出生日期", "客户生日", "birthday", "birth"),
+    "note": ("备注", "说明", "情况", "客户情况", "note", "notes", "remark"),
+    "source": ("来源", "渠道", "客户来源", "source", "channel"),
+    "wechat": ("微信", "微信号", "wechat", "weixin"),
+    "occupation": ("职业", "工作", "occupation", "job"),
+    "family": ("家庭", "家庭结构", "家庭情况", "family"),
+    "income": ("收入", "年收入", "收入区间", "income"),
+    "age": ("年龄", "age"),
+    "priority": ("优先级", "priority"),
+}
+
+
+def _normalize_header(value: str) -> str:
+    return re.sub(r"[\s_\-（）()【】\[\]:：]+", "", value or "").lower()
+
+
+def _decode_table(path: Path) -> tuple[str, str]:
+    raw = path.read_bytes()
+    for encoding in ("utf-8-sig", "utf-8", "gbk", "gb18030"):
+        try:
+            return raw.decode(encoding), encoding
+        except UnicodeDecodeError:
+            continue
+    raise SystemExit(f"无法识别文件编码：{path}。请另存为 UTF-8 或 GBK 的 CSV。")
+
+
+def _read_csv(path: Path) -> tuple[list[list[str]], str]:
+    text, encoding = _decode_table(path)
+    try:
+        dialect = csv.Sniffer().sniff(text[:4096], delimiters=",;\t")
+    except csv.Error:
+        dialect = csv.excel
+    rows = [[cell.strip() for cell in row] for row in csv.reader(io.StringIO(text), dialect)]
+    rows = [row for row in rows if any(cell for cell in row)]
+    if not rows:
+        raise SystemExit(f"文件是空的：{path}")
+    return rows, encoding
+
+
+def _map_columns(header: list[str], overrides: list[str] | None) -> tuple[dict[str, int], list[str]]:
+    lookup: dict[str, str] = {}
+    for field, aliases in IMPORT_COLUMN_ALIASES.items():
+        for alias in aliases:
+            lookup[_normalize_header(alias)] = field
+    custom: dict[str, str] = {}
+    for item in overrides or []:
+        if "=" not in item:
+            raise SystemExit(f"--map 格式应为 原列名=目标字段，收到：{item}")
+        source, target = item.split("=", 1)
+        custom[_normalize_header(source)] = target.strip()
+
+    mapping: dict[str, int] = {}
+    unknown: list[str] = []
+    for index, cell in enumerate(header):
+        key = _normalize_header(cell)
+        field = custom.get(key) or lookup.get(key)
+        if field and field not in mapping:
+            mapping[field] = index
+        elif cell:
+            unknown.append(cell)
+    return mapping, unknown
+
+
+def _normalize_birthday(raw: str) -> str:
+    value = (raw or "").strip()
+    if not value:
+        return ""
+    m = re.fullmatch(r"(\d{4})[-/.年](\d{1,2})[-/.月](\d{1,2})日?", value)
+    if m:
+        return f"{int(m.group(1)):04d}-{int(m.group(2)):02d}-{int(m.group(3)):02d}"
+    m = re.fullmatch(r"(\d{4})(\d{2})(\d{2})", value)
+    if m:
+        return f"{m.group(1)}-{m.group(2)}-{m.group(3)}"
+    m = re.fullmatch(r"(\d{1,2})[-/.月](\d{1,2})日?", value)
+    if m:
+        return f"{int(m.group(1)):02d}-{int(m.group(2)):02d}"
+    return value
+
+
+def _aliases_of(row: dict[str, str]) -> set[str]:
+    return {part.strip() for part in _split_field(row.get("aliases", "")) if part.strip()}
+
+
+def _duplicate_reason(name_index: dict[str, dict[str, str]], phone_index: dict[str, dict[str, str]],
+                      record: dict[str, str], seen: dict[str, str]) -> tuple[str, dict[str, str] | None]:
+    name = record.get("name", "").strip()
+    phone = record.get("phone", "").strip()
+    key = phone or name
+    if key and key in seen:
+        return f"文件内重复（{seen[key]}）", None
+    if phone and phone in phone_index:
+        row = phone_index[phone]
+        return f"与已有客户 {row['display_name']} 手机号相同", row
+    if name and name in name_index:
+        row = name_index[name]
+        return f"与已有客户 {row['display_name']} 重名", row
+    return "", None
+
+
+def _build_import_profile(base: Path, record: dict[str, str], cid: str) -> str:
+    body = TEMPLATE_PROFILE.format(today=_today())
+    age = record.get("age", "").strip()
+    age_bucket = _age_to_bucket(int(age)) if age.isdigit() else age
+    values = {
+        "customer_id": cid,
+        "display_name": record.get("name", ""),
+        "source": record.get("source", "") or "批量导入",
+        "city": record.get("city", ""),
+        "birthday": record.get("birthday", ""),
+        "occupation": record.get("occupation", ""),
+        "family_structure": record.get("family", ""),
+        "income_range": record.get("income", ""),
+        "age_range": age_bucket,
+        "priority": record.get("priority", "") or "B",
+    }
+    for key, value in values.items():
+        if value:
+            body = body.replace(f"{key}:\n", f"{key}: {value}\n", 1)
+    completeness = "L2" if any(record.get(k) for k in ("city", "birthday", "note", "family", "occupation")) else "L1"
+    body = body.replace("info_completeness: L0", f"info_completeness: {completeness}")
+    facts = [
+        f"- 姓名：{record.get('name', '') or '待确认'}",
+        f"- 手机：{record.get('phone', '') or '待补充'}",
+        f"- 城市：{record.get('city', '') or '待补充'}",
+        f"- 生日：{record.get('birthday', '') or '待补充'}",
+        f"- 微信：{record.get('wechat', '') or '待补充'}",
+        f"- 职业：{record.get('occupation', '') or '待补充'}",
+        f"- 家庭：{record.get('family', '') or '待补充'}",
+        f"- 来源：{record.get('source', '') or '批量导入'}",
+        f"- 备注：{record.get('note', '') or '无'}",
+    ]
+    body = body.replace("## 基础事实\n\n", "## 基础事实\n\n" + "\n".join(facts) + "\n", 1)
+    one_liner = record.get("note", "") or "、".join(x for x in (record.get("city", ""), record.get("family", "")) if x) or "待补充"
+    body = body.replace("## 一句话画像\n\n", f"## 一句话画像\n\n{one_liner}\n", 1)
+    return body
+
+
+def _append_import_pool(base: Path, lines: list[str], source_file: str) -> Path:
+    pool = base / "00-入口池" / "03-待确认"
+    pool.mkdir(parents=True, exist_ok=True)
+    path = pool / f"{_today()}-导入待确认.md"
+    if not path.exists():
+        path.write_text(f"# 导入待确认（{_today()}）\n\n> 来源：{source_file}\n\n", encoding="utf-8")
+    with path.open("a", encoding="utf-8") as handle:
+        for line in lines:
+            handle.write(line + "\n")
+    return path
+
+
+def import_csv(base: Path, file_path: str, overrides: list[str] | None,
+               apply: bool = False, as_json: bool = False) -> None:
+    path = Path(file_path).expanduser().resolve()
+    if not path.exists():
+        raise SystemExit(f"名单文件不存在：{path}")
+    rows, encoding = _read_csv(path)
+    header, data_rows = rows[0], rows[1:]
+    mapping, unknown = _map_columns(header, overrides)
+    if "name" not in mapping:
+        raise SystemExit("找不到姓名列。请用 --map 原列名=name 指定，例如 --map 客户=name")
+
+    existing = build_index(base)
+    name_index: dict[str, dict[str, str]] = {}
+    phone_index: dict[str, dict[str, str]] = {}
+    for row in existing:
+        if row.get("display_name"):
+            name_index.setdefault(row["display_name"], row)
+        for alias in _aliases_of(row):
+            name_index.setdefault(alias, row)
+        profile_path = base / row["path"]
+        if profile_path.exists():
+            match = PHONE_RE.search(profile_path.read_text(encoding="utf-8", errors="ignore"))
+            if match:
+                phone_index.setdefault(match.group(0), row)
+    seen: dict[str, str] = {}
+    created: list[str] = []
+    duplicates: list[dict[str, str]] = []
+    skipped: list[dict[str, str]] = []
+    id_match = re.search(r"(\d+)$", next_customer_id(base))
+    next_num = int(id_match.group(1)) if id_match else 1
+
+    for line_no, raw in enumerate(data_rows, start=2):
+        record = {
+            field: (raw[index].strip() if index < len(raw) else "")
+            for field, index in mapping.items()
+        }
+        record["birthday"] = _normalize_birthday(record.get("birthday", ""))
+        name = record.get("name", "").strip()
+        if not name:
+            skipped.append({"line": str(line_no), "reason": "没有姓名"})
+            continue
+        reason, matched = _duplicate_reason(name_index, phone_index, record, seen)
+        if reason:
+            duplicates.append({"line": str(line_no), "name": name, "phone": record.get("phone", ""), "reason": reason})
+            continue
+        key = record.get("phone", "").strip() or name
+        seen[key] = name
+        if not apply:
+            created.append(name)
+            continue
+        cid = f"CUST-{next_num:04d}"
+        next_num += 1
+        body = _build_import_profile(base, record, cid)
+        out = base / "01-客户档案" / f"{unique_profile_stem(base, name)}.md"
+        out.write_text(body, encoding="utf-8")
+        created.append(name)
+
+    pool_path = None
+    if apply and duplicates:
+        lines = [f"- {d['name']} / {d['phone']}：{d['reason']}，未新建（第 {d['line']} 行）" for d in duplicates]
+        pool_path = _append_import_pool(base, lines, path.name)
+
+    if apply:
+        write_index(base, quiet=True)
+
+    payload = {
+        "file": str(path),
+        "encoding": encoding,
+        "columns": {field: header[index] for field, index in mapping.items()},
+        "unknown_columns": unknown,
+        "rows": len(data_rows),
+        "created": len(created),
+        "duplicates": len(duplicates),
+        "skipped": len(skipped),
+        "profiles": created,
+        "duplicate_rows": duplicates,
+        "skipped_rows": skipped,
+        "pool": str(pool_path.relative_to(base)) if pool_path else None,
+        "applied": bool(apply),
+    }
+    if as_json:
+        _write_json(payload)
+        return
+    print("# 客户名单导入" + ("（已落盘）" if apply else "（预览，未落盘）"))
+    print(f"- 文件：{path.name}（编码 {encoding}，{len(data_rows)} 行）")
+    print(f"- 识别列：{'、'.join(f'{field}←{header[i]}' for field, i in mapping.items())}")
+    if unknown:
+        print(f"- 未识别列：{'、'.join(unknown)}（忽略）")
+    verb = "已新建" if apply else "将新建"
+    print(f"- {verb} {len(created)} 人，重复 {len(duplicates)} 行，跳过 {len(skipped)} 行")
+    if duplicates:
+        print("- 重复行：")
+        for item in duplicates[:20]:
+            print(f"  - 第 {item['line']} 行 {item['name']}：{item['reason']}")
+    if not apply:
+        print("执行需加 --apply。")
+
+
+# ---- 使用：提醒 -----------------------------------------------------------
+
+def _month_day(value: str) -> tuple[int, int] | None:
+    normalized = _normalize_birthday(value)
+    if re.fullmatch(r"\d{4}-\d{2}-\d{2}", normalized):
+        return int(normalized[5:7]), int(normalized[8:10])
+    if re.fullmatch(r"\d{2}-\d{2}", normalized):
+        return int(normalized[:2]), int(normalized[3:5])
+    return None
+
+
+def _next_birthday(value: str, today: date) -> date | None:
+    md = _month_day(value)
+    if not md:
+        return None
+    month, day = md
+    for year in (today.year, today.year + 1):
+        try:
+            candidate = date(year, month, day)
+        except ValueError:
+            continue
+        if candidate >= today:
+            return candidate
+    return None
+
+
+def remind_library(base: Path, days: int = 30, as_json: bool = False) -> None:
+    if days < 0:
+        raise SystemExit("--days 不能是负数")
+    today = date.today()
+    overdue: list[dict[str, object]] = []
+    upcoming: list[dict[str, object]] = []
+    birthdays: list[dict[str, object]] = []
+    for row in build_index(base):
+        if row.get("status") == "archived":
+            continue
+        name = row.get("display_name") or row.get("customer_id")
+        follow = row.get("next_followup_date", "").strip()
+        if re.fullmatch(r"\d{4}-\d{2}-\d{2}", follow):
+            follow_date = date.fromisoformat(follow)
+            delta = (follow_date - today).days
+            item = {
+                "customer_id": row["customer_id"],
+                "display_name": name,
+                "date": follow,
+                "days": delta,
+                "next_action": row.get("next_action", ""),
+            }
+            if delta < 0:
+                item["overdue_days"] = -delta
+                overdue.append(item)
+            elif delta <= days:
+                upcoming.append(item)
+        birthday = _next_birthday(row.get("birthday", ""), today)
+        if birthday and 0 <= (birthday - today).days <= days:
+            birthdays.append({
+                "customer_id": row["customer_id"],
+                "display_name": name,
+                "date": birthday.isoformat(),
+                "days": (birthday - today).days,
+                "birthday": row.get("birthday", ""),
+            })
+    overdue.sort(key=lambda x: x["date"])
+    upcoming.sort(key=lambda x: x["date"])
+    birthdays.sort(key=lambda x: x["date"])
+    payload = {
+        "date": today.isoformat(),
+        "days": days,
+        "groups": {"overdue": overdue, "upcoming": upcoming, "birthdays": birthdays},
+        "counts": {"overdue": len(overdue), "upcoming": len(upcoming), "birthdays": len(birthdays)},
+    }
+    if as_json:
+        _write_json(payload)
+        return
+    print(f"# 客户提醒（{today.isoformat()}，未来 {days} 天）")
+    print()
+    print(f"## 已逾期（{len(overdue)}）")
+    if overdue:
+        for item in overdue:
+            print(f"- {item['display_name']}（{item['customer_id']}）｜回访 {item['date']}｜逾期 {item['overdue_days']} 天｜下一步：{item['next_action'] or '未设置'}")
+    else:
+        print("- 没有逾期未跟进的客户")
+    print()
+    print(f"## 未来 {days} 天（{len(upcoming)}）")
+    if upcoming:
+        for item in upcoming:
+            print(f"- {item['display_name']}（{item['customer_id']}）｜回访 {item['date']}｜还有 {item['days']} 天｜下一步：{item['next_action'] or '未设置'}")
+    else:
+        print("- 未来没有已排期的回访")
+    print()
+    print(f"## 生日（{len(birthdays)}）")
+    if birthdays:
+        for item in birthdays:
+            print(f"- {item['display_name']}（{item['customer_id']}）｜{item['date']}｜还有 {item['days']} 天")
+    else:
+        print("- 未来没有客户生日")
+
+
+# ---- 使用：导出 -----------------------------------------------------------
+
+EXPORT_COLUMNS = ("姓名", "编号", "城市", "生日", "阶段", "优先级", "下步动作", "回访日期", "电话", "最近更新")
+
+
+def _mask_name(name: str) -> str:
+    name = (name or "").strip()
+    if not name:
+        return ""
+    return name[0] + "*" * max(1, len(name) - 1)
+
+
+def _mask_phone(phone: str) -> str:
+    digits = re.sub(r"\D", "", phone or "")
+    if len(digits) == 11:
+        return digits[:3] + "****" + digits[-4:]
+    return "***" if digits else ""
+
+
+def _profile_phone(base: Path, row: dict[str, str]) -> str:
+    path = base / row["path"]
+    if not path.exists():
+        return ""
+    match = PHONE_RE.search(path.read_text(encoding="utf-8", errors="ignore"))
+    return match.group(0) if match else ""
+
+
+def export_library(base: Path, fmt: str = "csv", out: str | None = None,
+                   mask: bool = False, as_json: bool = False) -> None:
+    fmt = (fmt or "csv").lower()
+    if fmt not in ("csv", "md"):
+        raise SystemExit(f"不支持的导出格式：{fmt}。用 csv 或 md。")
+    rows = [row for row in build_index(base) if row.get("status") != "archived"]
+    table: list[list[str]] = []
+    for row in rows:
+        table.append([
+            _mask_name(row.get("display_name", "")) if mask else row.get("display_name", ""),
+            row.get("customer_id", ""),
+            row.get("city", ""),
+            row.get("birthday", ""),
+            row.get("stage", ""),
+            row.get("priority", ""),
+            row.get("next_action", ""),
+            row.get("next_followup_date", ""),
+            _mask_phone(_profile_phone(base, row)) if mask else _profile_phone(base, row),
+            row.get("updated", ""),
+        ])
+    if out:
+        out_path = Path(out).expanduser().resolve()
+    else:
+        out_path = base / "90-索引与看板" / f"客户导出-{_today()}.{fmt}"
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    if fmt == "csv":
+        with out_path.open("w", encoding="utf-8-sig", newline="") as handle:
+            writer = csv.writer(handle)
+            writer.writerow(EXPORT_COLUMNS)
+            writer.writerows(table)
+    else:
+        lines = [
+            f"# 客户名单（{_today()}）",
+            "",
+            ("| " + " | ".join(EXPORT_COLUMNS) + " |"),
+            "|" + "---|" * len(EXPORT_COLUMNS),
+        ]
+        lines += ["| " + " | ".join(cell.replace("|", "／") for cell in row) + " |" for row in table]
+        out_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    payload = {"format": fmt, "out": str(out_path), "rows": len(table), "masked": bool(mask)}
+    if as_json:
+        _write_json(payload)
+    else:
+        print(f"已导出 {len(table)} 位客户到 {out_path}", file=sys.stderr)
+        if mask:
+            print("注意：这是脱敏版本，姓名和手机号已处理。", file=sys.stderr)
+
+
+# ---- 更新：备份 / 恢复 / 迁移 ---------------------------------------------
+
+BACKUP_SKIP_PARTS = {".git", "__pycache__", ".obsidian", ".claude", ".pytest_cache"}
+
+
+def backup_library(base: Path, out: str, as_json: bool = False) -> None:
+    if not base.is_dir():
+        raise SystemExit(f"客户库不存在：{base}")
+    out_dir = Path(out).expanduser().resolve()
+    out_dir.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    stem = f"{_safe_name(base.name, '客户库')}-{stamp}"
+    archive = out_dir / f"{stem}.zip"
+    files: list[str] = []
+    with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED) as zf:
+        for path in sorted(base.rglob("*")):
+            if not path.is_file():
+                continue
+            rel = path.relative_to(base)
+            if any(part in BACKUP_SKIP_PARTS for part in rel.parts):
+                continue
+            if path.name.endswith((".tmp", ".pyc")):
+                continue
+            resolved = path.resolve()
+            if out_dir == resolved.parent or out_dir in resolved.parents:
+                continue
+            if resolved == archive.resolve():
+                continue
+            zf.write(path, rel.as_posix())
+            files.append(rel.as_posix())
+    digest = hashlib.sha256(archive.read_bytes()).hexdigest()
+    manifest = {
+        "archive": archive.name,
+        "sha256": digest,
+        "file_count": len(files),
+        "created": datetime.now().isoformat(timespec="seconds"),
+        "base": str(base),
+        "schema_version": SCHEMA_VERSION,
+        "files": files,
+    }
+    manifest_path = out_dir / f"{stem}.manifest.json"
+    manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    payload = {"archive": str(archive), "manifest": str(manifest_path), "file_count": len(files), "sha256": digest}
+    if as_json:
+        _write_json(payload)
+    else:
+        print(f"已备份 {len(files)} 个文件到 {archive}")
+        print(f"校验值：{digest}")
+        print(f"清单：{manifest_path}")
+
+
+def restore_library(archive_arg: str, base: Path, manifest_arg: str | None = None,
+                    force: bool = False, as_json: bool = False) -> None:
+    archive = Path(archive_arg).expanduser().resolve()
+    if not archive.exists():
+        raise SystemExit(f"备份文件不存在：{archive}")
+    manifest_path = Path(manifest_arg).expanduser().resolve() if manifest_arg else archive.with_suffix("").with_suffix(".manifest.json")
+    manifest: dict[str, object] = {}
+    if manifest_path.exists():
+        try:
+            loaded = json.loads(manifest_path.read_text(encoding="utf-8"))
+            if isinstance(loaded, dict):
+                manifest = loaded
+        except Exception:
+            manifest = {}
+    expected = str(manifest.get("sha256", ""))
+    actual = hashlib.sha256(archive.read_bytes()).hexdigest()
+    if expected and expected != actual:
+        raise SystemExit(f"校验失败：压缩包 sha256 与清单不符（{actual[:12]} ≠ {expected[:12]}），拒绝恢复。")
+
+    if base.exists() and not base.is_dir():
+        raise SystemExit(f"恢复目标不是目录：{base}")
+    if base.exists() and any(base.iterdir()):
+        if not force:
+            raise SystemExit(f"目标目录非空：{base}。确认覆盖请加 --force。")
+    else:
+        base.mkdir(parents=True, exist_ok=True)
+
+    with zipfile.ZipFile(archive) as zf:
+        names = [name for name in zf.namelist() if not name.endswith("/")]
+        for name in names:
+            target = (base / name).resolve()
+            if base.resolve() not in target.parents and target != base.resolve():
+                raise SystemExit(f"压缩包包含越界路径，拒绝恢复：{name}")
+        zf.extractall(base)
+
+    for item in DIRS:
+        (base / item).mkdir(parents=True, exist_ok=True)
+    if not (base / VAULT_INFO_NAME).exists():
+        write_vault_info(base)
+    payload = {
+        "base": str(base),
+        "archive": str(archive),
+        "restored": len(names),
+        "verified": bool(expected),
+        "applied": True,
+    }
+    if as_json:
+        _write_json(payload)
+    else:
+        print(f"已恢复 {len(names)} 个文件到 {base}")
+        print("校验值：" + ("通过" if expected else "清单缺失，未校验"))
+
+
+def migrate_library(base: Path, apply: bool = False, as_json: bool = False) -> None:
+    if not base.exists():
+        raise SystemExit(f"客户库不存在：{base}")
+    changes: list[str] = []
+    missing_dirs = [item for item in DIRS if not (base / item).is_dir()]
+    if missing_dirs:
+        changes.append(f"补建 {len(missing_dirs)} 个目录")
+    info_path = base / VAULT_INFO_NAME
+    schema_version = None
+    if info_path.exists():
+        try:
+            schema_version = json.loads(info_path.read_text(encoding="utf-8")).get("schema_version")
+        except Exception:
+            schema_version = None
+    if str(schema_version) != SCHEMA_VERSION:
+        changes.append(f"补齐 {VAULT_INFO_NAME}（schema_version={SCHEMA_VERSION}）")
+    profiles: list[Path] = []
+    for row in build_index(base):
+        path = base / row["path"]
+        fm = extract_frontmatter(path.read_text(encoding="utf-8", errors="ignore"))
+        if "birthday" not in fm:
+            profiles.append(path)
+    if profiles:
+        changes.append(f"为 {len(profiles)} 份档案补 birthday 字段")
+
+    payload = {"migrated": bool(changes), "applied": bool(apply), "changes": changes,
+               "profiles": len(profiles), "missing_dirs": len(missing_dirs)}
+    if not changes:
+        payload["message"] = "无需迁移：库结构与 schema_version 已是最新"
+        if as_json:
+            _write_json(payload)
+        else:
+            print("无需迁移：库结构与 schema_version 已是最新。")
+        return
+    if not apply:
+        if as_json:
+            _write_json(payload)
+        else:
+            print("# 迁移预览（未落盘）")
+            for item in changes:
+                print(f"- {item}")
+            print("执行需加 --apply。")
+        return
+
+    for item in missing_dirs:
+        (base / item).mkdir(parents=True, exist_ok=True)
+    write_vault_info(base)
+    failed: list[str] = []
+    for path in profiles:
+        try:
+            text = path.read_text(encoding="utf-8")
+            path.write_text(_set_frontmatter_fields(text, {"birthday": ""}), encoding="utf-8")
+        except ValueError:
+            failed.append(path.name)
+    payload["failed"] = failed
+    if failed:
+        print(f"跳过 {len(failed)} 份 frontmatter 不完整的档案：{'、'.join(failed)}", file=sys.stderr)
+    if as_json:
+        _write_json(payload)
+    else:
+        print("# 迁移完成")
+        for item in changes:
+            print(f"- {item}")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     sub = parser.add_subparsers(dest="command", required=True)
@@ -2816,6 +3778,56 @@ def main() -> None:
     p_merge.add_argument("--apply", action="store_true", help="确认后执行；默认仅预览")
     p_merge.add_argument("--json", action="store_true", help="向 stdout 输出纯 JSON")
 
+    p_doctor = sub.add_parser("doctor")
+    p_doctor.add_argument("--base")
+    p_doctor.add_argument("--json", action="store_true", help="向 stdout 输出纯 JSON")
+
+    p_event = sub.add_parser("event")
+    p_event.add_argument("--base")
+    p_event.add_argument("--customer", required=True, help="客户姓名或编号")
+    p_event.add_argument("--kind", default="沟通", help="事件类型，如 面谈/电话/微信/保单服务")
+    p_event.add_argument("--text", required=True, help="这次沟通发生了什么")
+    p_event.add_argument("--next-action", help="更新客户档案的下一步动作")
+    p_event.add_argument("--followup-date", help="下次回访日期 YYYY-MM-DD")
+    p_event.add_argument("--apply", action="store_true", help="确认后落盘；默认仅预览")
+    p_event.add_argument("--json", action="store_true", help="向 stdout 输出纯 JSON")
+
+    p_import = sub.add_parser("import")
+    p_import.add_argument("--base")
+    p_import.add_argument("--file", required=True, help="CSV 名单文件")
+    p_import.add_argument("--map", action="append", help="自定义列映射，如 --map 客户姓名=name")
+    p_import.add_argument("--apply", action="store_true", help="确认后落盘；默认仅预览")
+    p_import.add_argument("--json", action="store_true", help="向 stdout 输出纯 JSON")
+
+    p_remind = sub.add_parser("remind")
+    p_remind.add_argument("--base")
+    p_remind.add_argument("--days", type=int, default=30, help="看未来多少天（默认 30）")
+    p_remind.add_argument("--json", action="store_true", help="向 stdout 输出纯 JSON")
+
+    p_export = sub.add_parser("export")
+    p_export.add_argument("--base")
+    p_export.add_argument("--format", choices=("csv", "md"), default="csv")
+    p_export.add_argument("--out", help="输出文件路径；缺省写到 90-索引与看板/")
+    p_export.add_argument("--mask", action="store_true", help="脱敏导出（姓名、手机号）")
+    p_export.add_argument("--json", action="store_true", help="向 stdout 输出纯 JSON")
+
+    p_backup = sub.add_parser("backup")
+    p_backup.add_argument("--base")
+    p_backup.add_argument("--out", required=True, help="备份存放目录")
+    p_backup.add_argument("--json", action="store_true", help="向 stdout 输出纯 JSON")
+
+    p_restore = sub.add_parser("restore")
+    p_restore.add_argument("--from", dest="archive", required=True, help="备份压缩包路径")
+    p_restore.add_argument("--base", required=True, help="恢复到哪个目录")
+    p_restore.add_argument("--manifest", help="清单路径；缺省找同目录同名 .manifest.json")
+    p_restore.add_argument("--force", action="store_true", help="目标目录非空时仍覆盖")
+    p_restore.add_argument("--json", action="store_true", help="向 stdout 输出纯 JSON")
+
+    p_migrate = sub.add_parser("migrate")
+    p_migrate.add_argument("--base")
+    p_migrate.add_argument("--apply", action="store_true", help="确认后落盘；默认仅预览")
+    p_migrate.add_argument("--json", action="store_true", help="向 stdout 输出纯 JSON")
+
     args = parser.parse_args()
 
     if args.command == "score-intake":
@@ -2850,6 +3862,47 @@ def main() -> None:
     if args.command == "merge":
         base = resolve_customer_library_path(args.base, must_exist=True)
         merge_customers(base, args.keep, args.absorb, apply=args.apply, as_json=args.json)
+        return
+
+    if args.command == "doctor":
+        base = resolve_customer_library_path(args.base, must_exist=False)
+        doctor_library(base, as_json=args.json)
+        return
+
+    if args.command == "event":
+        base = resolve_customer_library_path(args.base, must_exist=True)
+        record_event(base, args.customer, args.kind, args.text, args.next_action,
+                     args.followup_date, apply=args.apply, as_json=args.json)
+        return
+
+    if args.command == "import":
+        base = resolve_customer_library_path(args.base, must_exist=True)
+        import_csv(base, args.file, args.map, apply=args.apply, as_json=args.json)
+        return
+
+    if args.command == "remind":
+        base = resolve_customer_library_path(args.base, must_exist=True)
+        remind_library(base, days=args.days, as_json=args.json)
+        return
+
+    if args.command == "export":
+        base = resolve_customer_library_path(args.base, must_exist=True)
+        export_library(base, fmt=args.format, out=args.out, mask=args.mask, as_json=args.json)
+        return
+
+    if args.command == "backup":
+        base = resolve_customer_library_path(args.base, must_exist=True)
+        backup_library(base, args.out, as_json=args.json)
+        return
+
+    if args.command == "restore":
+        base = Path(args.base).expanduser().resolve()
+        restore_library(args.archive, base, manifest_arg=args.manifest, force=args.force, as_json=args.json)
+        return
+
+    if args.command == "migrate":
+        base = resolve_customer_library_path(args.base, must_exist=True)
+        migrate_library(base, apply=args.apply, as_json=args.json)
         return
 
     base = resolve_customer_library_path(args.base, must_exist=args.command != "init")

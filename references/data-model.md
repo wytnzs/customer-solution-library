@@ -45,6 +45,28 @@
 - 入口池先接住信息，再评分、匹配、路由。
 - 索引与看板负责规模化查询，不要靠人工翻目录。
 
+## 库信息与 schema 版本
+
+客户库根目录有一个 `库信息.json`，用来判断库的版本和完整性：
+
+```json
+{
+  "name": "客户解决方案库",
+  "skill": "customer-solution-library",
+  "schema_version": "4",
+  "directories": 27,
+  "created": "2026-11-26",
+  "updated": "2026-11-26"
+}
+```
+
+规则：
+
+- `init` 建库时写入，重复运行只更新 `updated`；
+- `doctor` 读它判断库是否已初始化、版本是否落后；
+- 老库没有这个文件时，`migrate --apply` 补齐，并给缺 `birthday` 的档案补字段；
+- 不要手工改 `schema_version`，迁移由 `migrate` 完成。
+
 ## 客户编号与命名
 
 客户编号（`customer_id`）是**系统内部稳定键**：用于合并（`merged_from` / `merged_into`）、命令行引用（`--customer-id`）和 JSON 字段对账。它不是客户标识——私有客户库里，客户标识就是真实姓名。
@@ -94,6 +116,7 @@ age_range: 31-40
 income_range: 20-50万
 occupation: 教师
 city: 杭州
+birthday: 1985-03-12
 family_structure: 已婚有孩
 privacy_level: P2
 info_completeness: L1
@@ -279,6 +302,32 @@ budget:
 ```
 
 事件记录只记录当次发生了什么；主档案只吸收稳定摘要。
+
+用 `event --apply` 记录时，事件文件带统一 frontmatter：
+
+```markdown
+---
+type: customer_event
+event_type: 面谈
+date: 2026-11-26
+customer_id: CUST-0001
+source: manual
+---
+
+# 面谈
+
+## 记录
+
+聊了重疾和预算，先做保障盘点
+
+## 下一步
+
+- 动作：发方案
+- 回访日期：2026-12-03
+```
+
+同日同类型再次记录会自动加 `-2`、`-3` 后缀，不覆盖前一条。
+`analyze-customer` 的「最近沟通」取该目录下最新的一个事件文件。
 
 ## 业务模块
 

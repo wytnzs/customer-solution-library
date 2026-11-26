@@ -26,3 +26,8 @@ jobs:
         env:
           PYTHONIOENCODING: utf-8
         run: python scripts/test_customer_library.py
+
+      - name: Run agent journey acceptance
+        env:
+          PYTHONIOENCODING: utf-8
+        run: python scripts/test_agent_journeys.py

@@ -1,6 +1,6 @@
 interface:
   display_name: "客户解决方案库"
-  short_description: "项目级客户库 Skill：联动知识库，管理档案、洞察、产品匹配与看板"
+  short_description: "项目级客户库 Skill：安装自检、批量导入、客户档案、事件与提醒、导出、备份恢复"
   default_prompt: "Use the project skill .claude/skills/customer-solution-library to 管理私有客户库，并与当前知识库协同：真实客户资料写入私有客户库，方法论/模板/脱敏案例写入知识库。"
 policy:
   allow_implicit_invocation: true

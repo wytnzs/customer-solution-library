@@ -4,7 +4,16 @@
 
 它不是传统 CRM，也不是简单通讯录。它的目标是把聊天记录、录音转写、面谈纪要、保单资料、客户口述、团队反馈等零散信息，沉淀为可分析、可筛选、可跟进、可复盘的长期客户资产。
 
-当前版本：**v3.1**（15 个命令，110 项回归测试全部通过）。
+当前版本：**v4.0**（23 个命令，回归 110 项 + 代理人旅程 84 项，共 194 项测试全部通过）。
+
+它覆盖代理人的完整路径：
+
+```text
+安装（doctor）
+→ 构建（init / import）
+→ 使用（capture / event / remind / export / analyze）
+→ 持续更新（backup / restore / migrate / audit）
+```
 
 核心链路：
 
@@ -36,6 +45,13 @@
 - 入口池批量评分（100 分制判断一条信息值不值得入库）
 - 支持团队协同、脱敏分享、客户复盘
 - 与个人知识库协同使用：知识库保存方法论，私有客户库保存真实客户资料
+- 装完先自检：环境、路径、目录、schema、索引一次看全（`doctor`）
+- 已有名单批量导入：CSV 支持 UTF-8/GBK、列名映射、姓名+手机去重（`import`）
+- 见完客户结构化记一条：事件流 + 下一步 + 回访日期（`event`）
+- 每周知道该找谁：已逾期 / 未来 30 天 / 生日三组提醒（`remind`）
+- 名单导出：CSV（Excel 直接打开）/ Markdown，可一键脱敏（`export`）
+- 数据安全：带 sha256 校验的备份与恢复，换电脑不丢（`backup` / `restore`）
+- 老库升级：幂等补齐目录、库版本和新增字段（`migrate`）
 
 ## 推荐安装方式：项目级安装
 
@@ -55,6 +71,22 @@ cd "<你的知识库项目路径>"
 
 ```powershell
 New-Item -ItemType Directory -Force ".claude\skills" | Out-Null; git clone https://github.com/wytnzs/customer-solution-library.git ".claude\skills\customer-solution-library"
+```
+
+国内网络 clone 不下来时，任选一条：
+
+```powershell
+# SSH 走 443 端口，通常更稳
+git clone ssh://git@ssh.github.com:443/wytnzs/customer-solution-library.git ".claude\skills\customer-solution-library"
+
+# 或浏览器打开 https://github.com/wytnzs/customer-solution-library
+# → Code → Download ZIP，解压到 .claude\skills\customer-solution-library
+```
+
+装完先自检，不要直接开始录客户：
+
+```powershell
+python ".claude\skills\customer-solution-library\scripts\customer_library.py" doctor --base "<你打算放客户库的路径>"
 ```
 
 如果已经安装过，更新：
@@ -141,6 +173,8 @@ customer-solution-library Skill
 ```
 
 ## 第一次使用
+
+> 从零到第一次用上，照着 [首次使用路线](references/first-run.md) 走，约 30 分钟。
 
 初始化私有客户库：
 
@@ -242,6 +276,26 @@ python .claude\skills\customer-solution-library\scripts\customer_library.py scor
 python .claude\skills\customer-solution-library\scripts\customer_library.py intake-pool --base "<你的私有客户库路径>"
 ```
 
+安装自检、批量导入与每天用：
+
+```powershell
+python .claude\skills\customer-solution-library\scripts\customer_library.py doctor --base "<你的私有客户库路径>"
+python .claude\skills\customer-solution-library\scripts\customer_library.py import --base "<你的私有客户库路径>" --file "<客户名单.csv>"
+python .claude\skills\customer-solution-library\scripts\customer_library.py import --base "<你的私有客户库路径>" --file "<客户名单.csv>" --apply
+python .claude\skills\customer-solution-library\scripts\customer_library.py event --base "<你的私有客户库路径>" --customer "张伟" --kind 面谈 --text "聊了重疾和预算" --next-action "发方案" --followup-date 2026-12-03 --apply
+python .claude\skills\customer-solution-library\scripts\customer_library.py remind --base "<你的私有客户库路径>" --days 30
+python .claude\skills\customer-solution-library\scripts\customer_library.py export --base "<你的私有客户库路径>" --format csv --out "客户名单.csv"
+python .claude\skills\customer-solution-library\scripts\customer_library.py export --base "<你的私有客户库路径>" --format csv --mask --out "脱敏名单.csv"
+```
+
+备份、恢复与升级：
+
+```powershell
+python .claude\skills\customer-solution-library\scripts\customer_library.py backup --base "<你的私有客户库路径>" --out "<备份目录>"
+python .claude\skills\customer-solution-library\scripts\customer_library.py restore --from "<备份.zip>" --base "<新电脑上的空目录>"
+python .claude\skills\customer-solution-library\scripts\customer_library.py migrate --base "<旧客户库路径>" --apply
+```
+
 查询与筛选：
 
 ```powershell
@@ -273,8 +327,9 @@ python .claude\skills\customer-solution-library\scripts\customer_library.py merg
 ## 文档
 
 - [SKILL.md](SKILL.md)：系统入口与全部命令说明
+- [首次使用路线](references/first-run.md)：30 分钟从安装到第一次用上
 - [客户管理库操作手册](docs/客户管理库操作手册.md)：完整操作手册
-- [更新记录](CHANGELOG.md)：8 轮迭代历程
+- [更新记录](CHANGELOG.md)：9 轮迭代历程
 - [客户库保存位置规则](references/storage-location-policy.md)
 - [与知识库协同使用规则](references/knowledge-base-integration.md)
 - [客户洞察与深度分析规则](references/customer-insights.md)
@@ -284,9 +339,12 @@ python .claude\skills\customer-solution-library\scripts\customer_library.py merg
 
 ```bash
 PYTHONIOENCODING=utf-8 python scripts/test_customer_library.py
+PYTHONIOENCODING=utf-8 python scripts/test_agent_journeys.py
 ```
 
 测试用临时客户库 fixture 驱动真实 CLI，覆盖预览不落盘、落盘 frontmatter/变更记录、筛选联动、非法输入拒绝、合并字段并集与事件流迁移等 110 项断言。
+
+`test_agent_journeys.py` 另按代理人四步走一遍真实路径：安装 → CSV 导入 → 事件/提醒/导出 → 备份/恢复/迁移，共 84 项断言。
 
 ## 隐私边界
 

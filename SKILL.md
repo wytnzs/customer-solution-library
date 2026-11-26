@@ -1,15 +1,26 @@
 ---
 name: customer-solution-library
-description: 客户解决方案库管理 Skill v3。用于建立、维护、查询、分析和协同处理客户信息库，支持项目级安装到 Claude Code/Codex 项目的 .claude/skills，支持与个人知识库协同使用：知识库保存方法论、模板、产品知识、脱敏案例，私有客户库保存真实客户资料。支持 Markdown 客户档案、结构化索引、统一信息入口、信号价值评分、保险客户与其他客户分类管理、录音转写/聊天记录/口述记录摘录、客户身份匹配与防误并档、分批补全、客户洞察卡、客户深度分析、信息缺口识别、产品/服务反向匹配客户、潜在客户筛选、客户分层、经营看板、跟进复盘、团队协同、分享脱敏、数据质量检查和标准化输出。触发场景包括：录入客户、查询客户、整理客户信息、判断一段客户信息是否值得入档、从聊天记录提取客户情况、把录音文字整理进客户档案、生成客户画像、生成客户分析 brief、生成专属解决方案、筛选某产品潜在客户、根据需求筛客户、找高价值客户、生成本周经营看板、更新客户档案、客户分层、客户跟进、客户复盘、团队协同处理客户、客户库与知识库联动、设计客户管理系统。
+description: 客户解决方案库管理 Skill v4。用于建立、维护、查询、分析和协同处理客户信息库，覆盖安装、构建、使用、持续更新四个环节，支持项目级安装到 Claude Code/Codex 项目的 .claude/skills，支持与个人知识库协同使用：知识库保存方法论、模板、产品知识、脱敏案例，私有客户库保存真实客户资料。支持 Markdown 客户档案、结构化索引、统一信息入口、信号价值评分、保险客户与其他客户分类管理、录音转写/聊天记录/口述记录摘录、客户身份匹配与防误并档、分批补全、客户洞察卡、客户深度分析、信息缺口识别、产品/服务反向匹配客户、潜在客户筛选、客户分层、经营看板、跟进复盘、团队协同、分享脱敏、数据质量检查、安装自检、CSV 批量导入、结构化事件记录、生日与回访提醒、名单导出与脱敏、备份恢复、库版本迁移和标准化输出。触发场景包括：装客户库、客户库自检、导入客户名单、CSV 导入客户、批量录入客户、记录一次面谈、记一次客户沟通、本周该找谁、客户生日提醒、回访提醒、导出客户名单、脱敏导出、备份客户库、恢复客户库、升级客户库、录入客户、查询客户、整理客户信息、判断一段客户信息是否值得入档、从聊天记录提取客户情况、把录音文字整理进客户档案、生成客户画像、生成客户分析 brief、生成专属解决方案、筛选某产品潜在客户、根据需求筛客户、找高价值客户、生成本周经营看板、更新客户档案、客户分层、客户跟进、客户复盘、团队协同处理客户、客户库与知识库联动、设计客户管理系统。
 ---
 
-# 客户解决方案库 v3
+# 客户解决方案库 v4
 
 ## 核心定位
 
 把客户库当成“客户长期服务大脑”，不是普通通讯录或销售 CRM。目标是围绕客户持续沉淀事实、判断、方案、沟通、跟进、复盘和团队协作。
 
 v3 的关键升级是：客户库不能只停留在录入和归档，必须进一步支持客户洞察、产品/服务反向筛选、专属方案和经营看板。录入是底座，分析和行动才是价值。
+
+v4 补的是**代理人的完整路径**，四个环节各有一组命令，缺一段都不算能用：
+
+```text
+安装：doctor                      装完先确认环境、路径、目录、schema、索引
+构建：init / import               建库；把微信、Excel 里的存量名单搬进来
+使用：capture / event / remind / export / analyze / filter / product-match
+更新：backup / restore / migrate / audit / index
+```
+
+判断「能不能用」的标准不是命令多，而是：一个没有技术背景的代理人，只照 `references/first-run.md` 做，不求助，能走完四步。
 
 ## 启动检查
 
@@ -18,6 +29,13 @@ v3 的关键升级是：客户库不能只停留在录入和归档，必须进�
 | 用户意图 | 动作 |
 |---|---|
 | 初始化客户库 | 使用 `scripts/customer_library.py init --base <路径>` 创建目录骨架 |
+| 安装后自检 / 不知道能不能跑 | 使用 `scripts/customer_library.py doctor --base <路径> [--json]`；检查 Python 版本、路径可写、27 个目录、`库信息.json` 版本、索引新鲜度；失败项按提示处理 |
+| 批量导入已有客户名单 | 使用 `scripts/customer_library.py import --base <路径> --file <CSV> [--map 原列名=name] [--apply] [--json]`；自动识别 UTF-8/GBK，常见列名自动映射，姓名+手机去重，默认只预览 |
+| 记录一次面谈/电话/微信 | 使用 `scripts/customer_library.py event --base <路径> --customer <姓名> --kind 面谈 --text "<发生了什么>" [--next-action <动作>] [--followup-date YYYY-MM-DD] [--apply]`；默认预览，`--apply` 才写事件和档案 |
+| 本周该找谁 / 客户生日 / 回访提醒 | 使用 `scripts/customer_library.py remind --base <路径> [--days 30] [--json]`；分已逾期、未来 N 天、生日三组，生日按今年下一次计算 |
+| 导出客户名单 / 给客户或团队看 | 使用 `scripts/customer_library.py export --base <路径> --format csv/md --out <文件> [--mask]`；CSV 带 BOM 可直接 Excel 打开，`--mask` 脱敏姓名和手机号 |
+| 备份 / 换电脑恢复 | 使用 `scripts/customer_library.py backup --base <路径> --out <备份目录>`；恢复用 `restore --from <zip> --base <空目录>`，先校验 sha256，非空目录需 `--force` |
+| 老库升级 / 缺字段 | 使用 `scripts/customer_library.py migrate --base <路径> [--apply]`；幂等补目录、`库信息.json` 和 `birthday` 字段，不改正文 |
 | 判断信息是否值得入库 | 读取 `references/intake-routing.md`，按 100 分制评分并给出路由 |
 | 批量处理入口池积压 | 使用 `scripts/customer_library.py intake-pool --base <路径>` 一次评分全部待处理/待匹配/待确认入口并生成汇总 |
 | 给一段客户描述抓取入档 | 使用 `scripts/customer_library.py capture --base <路径> --text "<描述>"`；无匹配生成新建档案草稿（含画像字段），有匹配生成更新建议；「可补充项」引导补全高价值缺项（非必填）；疑似命中但证据不足时提示确认而非静默新建；`--apply` 落盘，`--json` 输出机器可读结果 |
@@ -271,6 +289,7 @@ business_line:
 - `references/team-collaboration.md`：团队协同、分享、复核、权限边界。
 - `references/data-quality-audit.md`：数据质量检查、重复客户、过期跟进、隐私风险。
 - `references/output-formats.md`：客户速览、分析 brief、方案、跟进、客户可读话术模板。
+- `references/first-run.md`：代理人首次使用路线（安装 → 建库 → 导入 → 每天用 → 备份），30 分钟走完。
 - `scripts/customer_library.py`：初始化目录、刷新索引、关键词查询、入口评分、数据质量检查。
 
 常用命令：
@@ -290,7 +309,17 @@ python .claude/skills/customer-solution-library/scripts/customer_library.py capt
 python .claude/skills/customer-solution-library/scripts/customer_library.py segment --base <客户库路径> [--by age] [--json]
 python .claude/skills/customer-solution-library/scripts/customer_library.py set-status --base <客户库路径> --customer-id 张伟 --status archived [--reason 成交结束] [--apply] [--json]
 python .claude/skills/customer-solution-library/scripts/customer_library.py merge --base <客户库路径> --keep 张伟 --absorb 张先生 [--apply] [--json]
+python .claude/skills/customer-solution-library/scripts/customer_library.py doctor --base <客户库路径> [--json]
+python .claude/skills/customer-solution-library/scripts/customer_library.py import --base <客户库路径> --file <CSV> [--map 原列名=name] [--apply] [--json]
+python .claude/skills/customer-solution-library/scripts/customer_library.py event --base <客户库路径> --customer 张伟 --kind 面谈 --text "<记录>" [--next-action <动作>] [--followup-date 2026-12-03] [--apply] [--json]
+python .claude/skills/customer-solution-library/scripts/customer_library.py remind --base <客户库路径> [--days 30] [--json]
+python .claude/skills/customer-solution-library/scripts/customer_library.py export --base <客户库路径> --format csv/md --out <文件> [--mask] [--json]
+python .claude/skills/customer-solution-library/scripts/customer_library.py backup --base <客户库路径> --out <备份目录> [--json]
+python .claude/skills/customer-solution-library/scripts/customer_library.py restore --from <备份.zip> --base <目标目录> [--manifest <清单>] [--force] [--json]
+python .claude/skills/customer-solution-library/scripts/customer_library.py migrate --base <客户库路径> [--apply] [--json]
 ```
+
+`doctor` 是安装后的第一道检查：Python 版本、路径可写、目录结构、`库信息.json` 的 `schema_version`、索引是否新鲜；`--json` 输出 `ok/initialized/checks/issues/next`，`ok=false` 时退出码为 1。`import` 默认只预览，报告识别到的列、将新建人数、重复行和跳过行；`--apply` 才写档案并刷新索引，重复行进 `00-入口池/03-待确认/`。`event` 生成 `02-客户事件流/<姓名>/<日期>-<类型>.md`，同日同类自动加 `-2`，并同步档案的 `updated`/`next_action`/`next_followup_date`。`remind` 读 `birthday` 和 `next_followup_date`，按已逾期、未来 N 天、生日分组。`export` 缺省排除 archived 客户，CSV 用 UTF-8-BOM。`backup` 排除 `.git`、`__pycache__`、`.obsidian`，清单记录文件数、sha256 和文件列表；`restore` 先校验再解压，拒绝越界路径。`migrate` 幂等，第二次运行报「无需迁移」。
 
 客户标识用真实姓名：`--customer-id` 接受真实姓名（如 `张伟`）或内部编号（如 `CUST-0001`），两者等价；档案、事件流与输出目录都按姓名命名，同名自动加 `-2` 后缀。
 
@@ -298,6 +327,7 @@ python .claude/skills/customer-solution-library/scripts/customer_library.py merg
 
 ```powershell
 python .claude/skills/customer-solution-library/scripts/test_customer_library.py
+python .claude/skills/customer-solution-library/scripts/test_agent_journeys.py
 ```
 
 `product-match --detail` 额外生成每个命中客户的完整详情文件（一句话画像、阶段/完整度/优先级、匹配原因、画像匹配/偏离、风险点、缺口、建议动作、档案正文节选），实现「名单 → 详情」联动；产品画像可声明「适配画像」字段（`age_fit`/`income_fit`/`occupation_fit`/`city_fit`/`family_fit`，空 = 不约束），客户画像命中适配列表加分、偏离减分（软信号，缺省不奖不罚），把「客户群体 → 产品」反推接进筛选。`capture` 输出新建草稿或更新建议，`--apply` 才落盘；新建草稿会把画像字段（年龄/收入/职业/城市/家庭结构）写入 frontmatter，并输出「可补充项」引导补全高价值缺项（非必填）；只提到称呼、缺第二锚点时会提示「疑似命中」确认，而非静默新建。`segment` 输出按客户类型/业务线/阶段/完整度/优先级/需求标签聚合的群体画像，另含「主要客户画像」众数统计（容忍缺省、标注覆盖率）与「保险类型 × 客户画像」经营侧重反推（基于档案文本识别，需人工复核）；`--by` 按单维度钻取，逐取值输出客户数/覆盖率/客户清单/该取值典型画像（剔除被钻取维度），用于回答「客户群体集中在哪里」。
